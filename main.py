@@ -57,7 +57,6 @@ def main():
             log_model="all",
         )
         logger.log_hyperparams(exp.args)
-        logger.watch(model)
 
     trainer = pl.Trainer(
         max_epochs=exp.num_epochs,
