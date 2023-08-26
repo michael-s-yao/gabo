@@ -108,6 +108,7 @@ docs/
 experiment/__pycache__/
 lightning_logs/
 ckpts/
+wandb/
 
 # Datasets
 data/MNIST/

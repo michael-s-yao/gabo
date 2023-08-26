@@ -13,7 +13,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import torchvision
 import pytorch_lightning as pl
 from typing import Sequence
 
@@ -188,12 +187,9 @@ class GeneratorModule(pl.LightningModule):
         xq = self(z)
 
         if self.hparams.num_images_logged and self.logger:
-            self.logger.experiment.add_image(
+            self.logger.log_image(
                 "generated_images",
-                torchvision.utils.make_grid(
-                    xq[:self.hparams.num_images_logged]
-                ),
-                0
+                images=[xq[i] for i in range(self.hparams.num_images_logged)]
             )
 
         src = torch.ones(B).to(xp)
@@ -246,12 +242,9 @@ class GeneratorModule(pl.LightningModule):
         xq = self(torch.randn((B, self.hparams.z_dim)).to(xp))
 
         if self.hparams.num_images_logged and self.logger:
-            self.logger.experiment.add_image(
-                "generated_images",
-                torchvision.utils.make_grid(
-                    xq[:self.hparams.num_images_logged]
-                ),
-                0
+            self.logger.log_image(
+                "val_generated_images",
+                images=[xq[i] for i in range(self.hparams.num_images_logged)]
             )
 
         src = torch.ones(B).to(xp)

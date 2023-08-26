@@ -10,7 +10,6 @@ import os
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
-import wandb
 
 from data.mnist import MNISTDataModule
 from models.generator import GeneratorModule
