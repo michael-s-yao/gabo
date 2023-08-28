@@ -62,6 +62,4 @@ class Objective(nn.Module):
         Returns:
             L2 energy of x.
         """
-        return torch.mean(
-            torch.sqrt(torch.sum(torch.square(x), dim=(1, 2, 3)))
-        )
+        return torch.mean(torch.sum(torch.square(x), dim=(1, 2, 3)))

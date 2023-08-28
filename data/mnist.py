@@ -40,10 +40,7 @@ class MNISTDataModule(pl.LightningDataModule):
         self.seed = seed
         self.val_partition = min(max(val_partition, 0.0), 1.0)
 
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,)),
-        ])
+        self.transform = transforms.ToTensor()
 
         self.x_dims = (1, 28, 28)
         self.num_labels = 10

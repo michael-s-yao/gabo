@@ -14,12 +14,13 @@ from pytorch_lightning.loggers import WandbLogger
 from data.mnist import MNISTDataModule
 from models.generator import GeneratorModule
 from experiment.params import Experiment
-from experiment.utility import seed_everything
+from experiment.utility import seed_everything, plot_config
 
 
 def main():
     exp = Experiment()
     seed_everything(seed=exp.seed)
+    plot_config()
     beta1, beta2 = exp.beta
 
     datamodule = MNISTDataModule(
@@ -36,7 +37,7 @@ def main():
     callbacks = [
         EarlyStopping(
             monitor="val_objective_G",
-            min_delta=0.0,
+            min_delta=0.01,
             patience=10,
             verbose=False,
             mode="max"
@@ -51,7 +52,11 @@ def main():
     ]
 
     logger = False
-    if not exp.disable_wandb and not exp.fast_dev_run:
+    if (
+        not exp.disable_wandb and
+        not exp.fast_dev_run and
+        not exp.mode == "test"
+    ):
         logger = WandbLogger(
             project=os.path.basename(os.path.dirname(__file__)),
             log_model="all",

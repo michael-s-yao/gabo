@@ -8,13 +8,16 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 from collections import OrderedDict
+import matplotlib.pyplot as plt
 import numpy as np
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from pathlib import Path
 import pytorch_lightning as pl
-from typing import Sequence
+from typing import Sequence, Union
 
 from models.block import Block
 from models.discriminator import Discriminator
@@ -87,10 +90,11 @@ class Generator(nn.Module):
         Input:
             z: latent space vector as input to the generator.
         Returns:
-            Generated sample x = G(z).
+            Generated sample x = G(z), where pixel intensities are scaled to be
+            between 0 and 1.
         """
-        img = self.model(z)
-        return img.view(img.size(0), *self.x_dim)
+        x = self.model(z)
+        return (0.5 * x.view(x.size(0), *self.x_dim)) + 0.5
 
 
 class GeneratorModule(pl.LightningModule):
@@ -266,6 +270,17 @@ class GeneratorModule(pl.LightningModule):
         Returns:
             None.
         """
+        xp, _ = batch
+        B, C, H, W = xp.size()
+
+        xq = self(torch.randn((B, self.hparams.z_dim)).to(xp))
+        if self.hparams.num_images_logged:
+            self.log_image([
+                xq[i] for i in range(
+                    max(len(xq), self.hparams.num_images_logged)
+                )
+            ])
+
         return
 
     def configure_optimizers(self) -> Sequence[optim.Optimizer]:
@@ -292,3 +307,41 @@ class GeneratorModule(pl.LightningModule):
         )
 
         return [optimizer_G, optimizer_D]
+
+    def log_image(
+        self,
+        images: Sequence[torch.Tensor],
+        savedir: Union[Path, str] = "./output",
+        with_colorbar: bool = False
+    ) -> None:
+        """
+        Saves a series of images to a specified directory.
+        Input:
+            images: sequence of images to save.
+            savedir: directory to save to. Default `./output`.
+            with_colorbar: whether to save image with colorbar. Default False.
+        Returns:
+            None.
+        """
+        if not os.path.isdir(savedir):
+            os.mkdir(savedir)
+        for i, img in enumerate(images):
+            plt.figure()
+            plt.imshow(
+                img[0, ...].detach().cpu().numpy(),
+                cmap="gray",
+                vmin=0.0,
+                vmax=1.0
+            )
+            plt.axis("off")
+            if with_colorbar:
+                plt.colorbar()
+            plt.savefig(
+                os.path.join(savedir, f"{i}.png"),
+                transparent=True,
+                bbox_inches="tight",
+                format="png",
+                dpi=600
+            )
+            plt.close()
+        return
