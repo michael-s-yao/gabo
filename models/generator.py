@@ -203,7 +203,7 @@ class GeneratorModule(pl.LightningModule):
             loss_G += self.hparams.alpha * self.src_discriminator_loss(
                 self.discriminator(xq), src
             )
-        self.log("loss_G", loss_G, prog_bar=True)
+        self.log("loss_G", loss_G, prog_bar=True, sync_dist=True)
         self.manual_backward(loss_G)
         optimizer_G.step()
         optimizer_G.zero_grad()
@@ -223,7 +223,7 @@ class GeneratorModule(pl.LightningModule):
             )
 
             loss_D = (src_loss + gen_loss) / 2
-            self.log("loss_D", loss_D, prog_bar=True)
+            self.log("loss_D", loss_D, prog_bar=True, sync_dist=True)
             self.manual_backward(loss_D)
             optimizer_D.step()
             optimizer_D.zero_grad()
@@ -256,8 +256,8 @@ class GeneratorModule(pl.LightningModule):
         objective_G, loss_D = self.objective(xq), 0.0
         if self.discriminator:
             loss_D = self.src_discriminator_loss(self.discriminator(xq), src)
-        self.log("val_objective_G", objective_G, prog_bar=True)
-        self.log("val_loss_D", loss_D, prog_bar=True)
+        self.log("val_objective_G", objective_G, prog_bar=True, sync_dist=True)
+        self.log("val_loss_D", loss_D, prog_bar=True, sync_dist=True)
 
     def test_step(
         self, batch: Sequence[torch.Tensor], batch_idx: int
