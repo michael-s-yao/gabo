@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
 import pytorch_lightning as pl
-from typing import Optional, Sequence, Union
+from typing import Sequence, Union
 
 from models.block import Block
 from models.objective import Objective
@@ -179,7 +179,10 @@ class GeneratorModule(pl.LightningModule):
         xp, _ = batch
         B, C, H, W = xp.size()
 
-        optimizer_G, optimizer_D = self.optimizers()
+        if self.regularization:
+            optimizer_G, optimizer_D = self.optimizers()
+        else:
+            optimizer_G, optimizer_D = self.optimizers(), None
 
         z = torch.randn((B, self.hparams.z_dim)).to(xp)
 
@@ -270,7 +273,7 @@ class GeneratorModule(pl.LightningModule):
 
         return
 
-    def configure_optimizers(self) -> Sequence[Optional[optim.Optimizer]]:
+    def configure_optimizers(self) -> Sequence[optim.Optimizer]:
         """
         Configure manual optimization.
         Input:
@@ -293,7 +296,7 @@ class GeneratorModule(pl.LightningModule):
         else:
             optimizer_D = None
 
-        return [optimizer_G, optimizer_D]
+        return [optimizer_G, optimizer_D] if optimizer_D else [optimizer_G]
 
     def log_image(
         self,
