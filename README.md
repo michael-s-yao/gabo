@@ -23,22 +23,16 @@ source env/bin/activate
 pip install -r requirements.txt
 ```
 
-Our codebase uses [Weights & Biases](https://wandb.ai/site) for experiment tracking. To properly configure W&B, please run the following command in the root project directory.
-
-```
-python setup.py --project [PROJECT_NAME]
-```
-
 After successful setup, you can run our code as
 
 ```
-python main.py --optimizer [OPTIMIZER]
+python main.py --optimizer [OPTIMIZER] --alpha [ALPHA]
 ```
 
-If you would prefer not to use W&B for experiment tracking, you can disable it using
+Our codebase uses [Weights & Biases](https://wandb.ai/site) for experiment tracking. If you would prefer not to use W&B for experiment tracking, you can disable it using
 
 ```
-python main.py --optimizer [OPTIMIZER] --disable_wandb
+python main.py --optimizer [OPTIMIZER] --alpha [ALPHA] --disable_wandb
 ```
 
 For other script arguments, you can run
