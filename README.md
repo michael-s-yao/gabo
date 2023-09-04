@@ -1,4 +1,4 @@
-# In-Distribution Objective Optimization for Generative Networks
+# Constrained In-Distribution Optimization for Generative Networks via Source Discriminator Regularization
 
 [![LICENSE](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.md)
 [![CONTACT](https://img.shields.io/badge/contact-michael.yao%40pennmedicine.upenn.edu-blue)](mailto:michael.yao@pennmedicine.upenn.edu)

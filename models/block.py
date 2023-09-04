@@ -29,7 +29,7 @@ def Block(
         layer.append(nn.BatchNorm1d(out_dim))
 
     if activation.lower() == "leakyrelu":
-        layer.append(nn.LeakyReLU(negative_slope=0.2, inplace=True))
+        layer.append(nn.LeakyReLU(negative_slope=0.2, inplace=False))
     elif activation.lower() == "tanh":
         layer.append(nn.Tanh())
     elif activation.lower() == "sigmoid":

@@ -110,6 +110,7 @@ lightning_logs/
 ckpts/
 wandb/
 output/
+progress/
 
 # Datasets
 data/MNIST/

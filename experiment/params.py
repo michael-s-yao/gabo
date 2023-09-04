@@ -32,9 +32,9 @@ class Experiment:
         )
         parser.add_argument(
             "--alpha",
-            default=0.0,
+            default=0.5,
             type=float,
-            help="Source discriminator regularization weighting. Default 0.0."
+            help="Relative regularization weighting. Default 0.5."
         )
         parser.add_argument(
             "--resume_from",
@@ -62,9 +62,9 @@ class Experiment:
         )
         parser.add_argument(
             "--num_epochs",
-            default=100,
+            default=200,
             type=int,
-            help="Number of epochs. Default 100."
+            help="Number of epochs. Default 200."
         )
         parser.add_argument(
             "--ckpt_dir",
@@ -74,9 +74,9 @@ class Experiment:
         )
         parser.add_argument(
             "--batch_size",
-            default=128,
+            default=256,
             type=int,
-            help="Batch size. Default 128."
+            help="Batch size. Default 256."
         )
         parser.add_argument(
             "--seed", default=42, type=int, help="Random seed. Default 42."
@@ -96,6 +96,12 @@ class Experiment:
             type=str,
             choices=("train", "test", "both"),
             help="Whether to train the model, test a model, or both."
+        )
+        parser.add_argument(
+            "--num_images_logged",
+            default=8,
+            type=int,
+            help="Number of images to log. Default 8."
         )
         parser.add_argument(
             "--fast_dev_run", action="store_true", help="Test code only."

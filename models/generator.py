@@ -13,15 +13,15 @@ import numpy as np
 import os
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from pathlib import Path
 import pytorch_lightning as pl
-from typing import Sequence, Union
+from typing import Optional, Sequence, Union
 
 from models.block import Block
-from models.discriminator import Discriminator
 from models.objective import Objective
+from models.metric import FID
+from models.regularization import Regularization
 
 
 class Generator(nn.Module):
@@ -107,6 +107,7 @@ class GeneratorModule(pl.LightningModule):
         self,
         objective: str,
         alpha: float = 0.0,
+        regularization: str = "gan_loss",
         z_dim: int = 128,
         x_dim: Sequence[int] = (1, 28, 28),
         lr: float = 0.0002,
@@ -120,6 +121,8 @@ class GeneratorModule(pl.LightningModule):
             objective: objective function to optimize the generator against.
             alpha: source discriminator regularization weighting term.
                 Default no source discriminator regularization.
+            regularization: method of regularization. One of [`None`, `fid`,
+                `gan_loss`, `importance_weighting`, `wasserstein_distance`].
             z_dim: number of latent dimensions as input to the generator G.
                 Default 128.
             x_dim: dimensions CHW of the output image from the generator G.
@@ -128,19 +131,29 @@ class GeneratorModule(pl.LightningModule):
             beta1: beta_1 parameter in Adam optimizer algorithm. Default 0.5.
             beta2: beta_2 parameter in Adam optimizer algorithm. Default 0.999.
             num_images_logged: number of images to log per training and
-                validation step.
+                validation step. Can also use this parameter to set the *total*
+                number of images to log during model testing.
         """
         super().__init__()
         self.save_hyperparameters()
+        self.hparams.alpha = min(max(alpha, 0.0), 1.0)
         self.automatic_optimization = False
 
         self.generator = Generator(
             z_dim=self.hparams.z_dim, x_dim=self.hparams.x_dim
         )
-        self.discriminator = None
-        if 0.0 < self.hparams.alpha < 1.0:
-            self.discriminator = Discriminator(x_dim=self.hparams.x_dim)
-        self.objective = Objective(objective)
+
+        self.regularization = None
+        if self.hparams.alpha > 0.0:
+            self.regularization = Regularization(
+                method=regularization,
+                x_dim=self.hparams.x_dim
+            )
+            self.loss_D = self.regularization.loss_D
+
+        self.objective = None
+        if self.hparams.alpha < 1.0:
+            self.objective = Objective(objective, x_dim=x_dim)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -151,20 +164,6 @@ class GeneratorModule(pl.LightningModule):
             Generated sample x = G(z).
         """
         return self.generator(z)
-
-    def src_discriminator_loss(
-        self, src_pred: torch.Tensor, src: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Source discriminator D loss.
-        Input:
-            src_pred: discriminator predicted probability that sample is from
-                source distribution.
-            src: ground truth whether sample is from source distribution.
-        Returns:
-            Binary cross entropy loss of source discriminator.
-        """
-        return F.binary_cross_entropy(src_pred, src)
 
     def training_step(
         self, batch: Sequence[torch.Tensor], batch_idx: int
@@ -180,10 +179,7 @@ class GeneratorModule(pl.LightningModule):
         xp, _ = batch
         B, C, H, W = xp.size()
 
-        if self.discriminator:
-            optimizer_G, optimizer_D = self.optimizers()
-        else:
-            optimizer_G, optimizer_D = self.optimizers(), None
+        optimizer_G, optimizer_D = self.optimizers()
 
         z = torch.randn((B, self.hparams.z_dim)).to(xp)
 
@@ -196,33 +192,20 @@ class GeneratorModule(pl.LightningModule):
                 images=[xq[i] for i in range(self.hparams.num_images_logged)]
             )
 
-        src = torch.ones(B).to(xp)
-
-        loss_G = -1.0 * self.objective(xq)
-        if self.hparams.alpha:
-            loss_G += self.hparams.alpha * self.src_discriminator_loss(
-                self.discriminator(xq), src
-            )
+        loss_G = 0.0
+        if self.objective:
+            loss_G += (1.0 - self.hparams.alpha) * self.objective(xq)
+        if self.regularization:
+            loss_G += (self.hparams.alpha) * self.regularization(xp, xq)
         self.log("loss_G", loss_G, prog_bar=True, sync_dist=True)
-        self.manual_backward(loss_G)
+        self.manual_backward(loss_G, retain_graph=bool(optimizer_D))
         optimizer_G.step()
         optimizer_G.zero_grad()
         self.untoggle_optimizer(optimizer_G)
 
         if optimizer_D:
             self.toggle_optimizer(optimizer_D)
-
-            src_id = torch.ones(B).to(xp)
-            src_loss = self.src_discriminator_loss(
-                self.discriminator(xq), src_id
-            )
-
-            gen_id = torch.zeros(B).to(xp)
-            gen_loss = self.src_discriminator_loss(
-                self.discriminator(xq.detach()), gen_id
-            )
-
-            loss_D = (src_loss + gen_loss) / 2
+            loss_D = self.loss_D(xp, xq.detach())
             self.log("loss_D", loss_D, prog_bar=True, sync_dist=True)
             self.manual_backward(loss_D)
             optimizer_D.step()
@@ -243,7 +226,8 @@ class GeneratorModule(pl.LightningModule):
         xp, _ = batch
         B, C, H, W = xp.size()
 
-        xq = self(torch.randn((B, self.hparams.z_dim)).to(xp))
+        z = torch.randn((B, self.hparams.z_dim)).to(xp)
+        xq = self(z)
 
         if self.hparams.num_images_logged and self.logger:
             self.logger.log_image(
@@ -251,13 +235,14 @@ class GeneratorModule(pl.LightningModule):
                 images=[xq[i] for i in range(self.hparams.num_images_logged)]
             )
 
-        src = torch.ones(B).to(xp)
+        if self.objective:
+            self.log(
+                "val_obj", self.objective(xq), prog_bar=True, sync_dist=True
+            )
+        else:
+            self.log("val_obj", 0.0, prog_bar=True, sync_dist=True)
 
-        objective_G, loss_D = self.objective(xq), 0.0
-        if self.discriminator:
-            loss_D = self.src_discriminator_loss(self.discriminator(xq), src)
-        self.log("val_objective_G", objective_G, prog_bar=True, sync_dist=True)
-        self.log("val_loss_D", loss_D, prog_bar=True, sync_dist=True)
+        self.log("val_fid", FID(xp, xq), prog_bar=True, sync_dist=True)
 
     def test_step(
         self, batch: Sequence[torch.Tensor], batch_idx: int
@@ -270,20 +255,22 @@ class GeneratorModule(pl.LightningModule):
         Returns:
             None.
         """
+        if self.hparams.num_images_logged <= 0:
+            return
+
         xp, _ = batch
         B, C, H, W = xp.size()
 
-        xq = self(torch.randn((B, self.hparams.z_dim)).to(xp))
-        if self.hparams.num_images_logged:
-            self.log_image([
-                xq[i] for i in range(
-                    max(len(xq), self.hparams.num_images_logged)
-                )
-            ])
+        num_images_to_log = self.hparams.num_images_logged - (
+            batch_idx * min(B, self.hparams.num_images_logged)
+        )
+        if num_images_to_log > 0:
+            xq = self(torch.randn((B, self.hparams.z_dim)).to(xp))
+            self.log_image([xq[i] for i in range(min(B, num_images_to_log))])
 
         return
 
-    def configure_optimizers(self) -> Sequence[optim.Optimizer]:
+    def configure_optimizers(self) -> Sequence[Optional[optim.Optimizer]]:
         """
         Configure manual optimization.
         Input:
@@ -297,14 +284,14 @@ class GeneratorModule(pl.LightningModule):
             betas=(self.hparams.beta1, self.hparams.beta2)
         )
 
-        if self.discriminator is None:
-            return [optimizer_G]
-
-        optimizer_D = optim.Adam(
-            self.discriminator.parameters(),
-            lr=self.hparams.lr,
-            betas=(self.hparams.beta1, self.hparams.beta2)
-        )
+        if self.regularization:
+            optimizer_D = optim.Adam(
+                self.regularization.D.parameters(),
+                lr=self.hparams.lr,
+                betas=(self.hparams.beta1, self.hparams.beta2)
+            )
+        else:
+            optimizer_D = None
 
         return [optimizer_G, optimizer_D]
 

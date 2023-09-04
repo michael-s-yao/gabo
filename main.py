@@ -7,8 +7,9 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import os
+import torch
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from data.mnist import MNISTDataModule
@@ -31,25 +32,15 @@ def main():
         alpha=exp.alpha,
         lr=exp.lr,
         beta1=beta1,
-        beta2=beta2
+        beta2=beta2,
+        num_images_logged=exp.num_images_logged
     )
 
     callbacks = [
-        EarlyStopping(
-            monitor="val_objective_G",
-            min_delta=0.01,
-            patience=10,
-            verbose=False,
-            mode="max"
-        ),
-        ModelCheckpoint(
-            dirpath=exp.ckpt_dir,
-            monitor="val_objective_G",
-            filename="{epoch}_{val_objective_G:.2f}_{val_loss_D:.2f}",
-            save_last=True,
-            mode="max"
-        )
+        ModelCheckpoint(dirpath=exp.ckpt_dir, save_last=True)
     ]
+    meta = f"{exp.objective}_alpha={exp.alpha}"
+    callbacks[0].CHECKPOINT_NAME_LAST = f"{meta}_{{epoch}}_last"
 
     logger = False
     if (
@@ -80,7 +71,12 @@ def main():
             ckpt_path=exp.resume_from
         )
     if exp.mode in ("both", "test"):
-        model = GeneratorModule.load_from_checkpoint(exp.resume_from)
+        try:
+            model = GeneratorModule.load_from_checkpoint(exp.resume_from)
+        except RuntimeError:
+            model = GeneratorModule.load_from_checkpoint(
+                exp.resume_from, map_location=torch.device("cpu")
+            )
         trainer.test(model, datamodule=datamodule)
 
 

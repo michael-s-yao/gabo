@@ -8,7 +8,9 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch
 import torch.nn as nn
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
+
+from models.discriminator import Discriminator
 
 
 class Regularization(nn.Module):
@@ -16,26 +18,23 @@ class Regularization(nn.Module):
 
     def __init__(
         self,
-        alpha: float,
         method: Optional[str] = None,
-        D: Optional[nn.Module] = None,
-        p: Optional[Union[int, str]] = 2
+        x_dim: Optional[Tuple[int]] = (1, 28, 28),
+        p: Optional[Union[int, str]] = 1
     ):
         """
         Args:
-            alpha: regularization penalty weighting term.
             method: method of regularization. One of [`None`, `fid`,
-                `importance_weighting`, `_wasserstein_distance`].
-            D: source discriminator network. Must be provided if the method of
-                regularization is `importance_weighting`.
+                `gan_loss`, `importance_weighting`, `wasserstein_distance`].
+            x_dim: dimensions CHW of the output image from the generator G.
+                Default MNIST dimensions (1, 28, 28).
             p: Wasserstein distance norm. p >= 1 or p == `inf`. Must be
                 provided if the method of Regularization is
                 `_wasserstein_distance`.
         """
         super().__init__()
-        self.alpha = alpha
         self.method = method
-        self.D = D
+        self.D = Discriminator(x_dim=x_dim)
         self.p = p
 
     def forward(
@@ -50,16 +49,30 @@ class Regularization(nn.Module):
         """
         if self.method is None or self.method == "":
             return 0.0
-        if self.method.lower() == "importance_weighting":
-            return self.alpha * (torch.mean(self._importance_weight(xp)) - 1.0)
+
+        if self.method.lower() == "gan_loss":
+            return torch.mean(self._gan_loss(xq))
+        elif self.method.lower() == "importance_weighting":
+            return torch.mean(self._importance_weight(xp)) - 1.0
         elif self.method.lower() == "wasserstein_distance":
-            return self.alpha * torch.mean(self._wasserstein_distance(xp, xq))
+            return torch.mean(self._wasserstein_distance(xp, xq))
         elif self.method.lower() == "fid":
-            return self.alpha * self._fid(xp, xq)
+            return self._fid(xp, xq)
         else:
             raise NotImplementedError(
                 f"Regularization method {self.method} not implemented."
             )
+
+    def _gan_loss(self, xq: torch.Tensor) -> torch.Tensor:
+        """
+        Computes the log of the source discriminator output on the generated
+        samples `xq` from `q(x)`.
+        Input:
+            xq: samples from source distribution `q(x)`.
+        Returns:
+            -log(D(xq)).
+        """
+        return -1.0 * torch.log(self.D(xq))
 
     def _importance_weight(self, xp: torch.Tensor) -> torch.Tensor:
         """
@@ -70,7 +83,6 @@ class Regularization(nn.Module):
         Returns:
             Estimated importance weights at those values of x.
         """
-        # TODO: Should this be (1 / g(x)) - 0.5 as in Sangdon's implementation?
         return (1.0 / self.D(xp)) - 1.0
 
     def _wasserstein_distance(
@@ -88,20 +100,16 @@ class Regularization(nn.Module):
         # TODO: Implement Wasserstein distance.
         return 0
 
-    def _fid(self, xp: torch.Tensor, xq: torch.Tensor) -> torch.Tensor:
+    def loss_D(self, xp: torch.Tensor, xq: torch.Tensor) -> torch.Tensor:
         """
-        Computes the Frechet inception distance between `xp` samples from
-        `p(x)` and `xq` samples from `q(x)`.
+        Source discriminator D loss.
         Input:
             xp: samples from source distribution `p(x)`.
             xq: samples from target distribution `q(x)`.
         Returns:
-            Estimated Frechet inception distance between `p(x)` and `q(x)`.
+            Loss of source discriminator.
         """
-        mup, muq = torch.mean(xp), torch.mean(xq)
-        covarp = torch.cov(xp.view(xp.size(0), -1))
-        covarq = torch.cov(xq.view(xq.size(0), -1))
-        d2 = torch.square(mup - muq) + torch.trace(
-            covarp + covarq - (2.0 * torch.sqrt(covarp * covarq))
+
+        return torch.mean(
+            -0.5 * (torch.log(self.D(xp)) + torch.log(1.0 - self.D(xq)))
         )
-        return torch.sqrt(d2)

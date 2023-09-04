@@ -78,4 +78,4 @@ class Discriminator(nn.Module):
         Returns:
             Probability of x being from source distribution.
         """
-        return self.model(x.view(x.size(0), -1))
+        return torch.squeeze(self.model(x.view(x.size(0), -1)), dim=-1)
