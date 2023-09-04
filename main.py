@@ -54,6 +54,9 @@ def main():
         )
         logger.log_hyperparams(exp.args)
 
+    strategy = "auto"
+    if exp.find_unused_parameters:
+        strategy = "ddp_find_unused_parameters_true"
     trainer = pl.Trainer(
         max_epochs=exp.num_epochs,
         accelerator=exp.device,
@@ -62,6 +65,7 @@ def main():
         deterministic=True,
         fast_dev_run=exp.fast_dev_run,
         gradient_clip_val=exp.clip,
+        strategy=strategy
     )
 
     if exp.mode in ("both", "train"):

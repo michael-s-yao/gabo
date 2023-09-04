@@ -104,6 +104,11 @@ class Experiment:
             help="Number of images to log. Default 8."
         )
         parser.add_argument(
+            "--find_unused_parameters",
+            action="store_true",
+            help="Find unused parameters in distributed multi-GPU training."
+        )
+        parser.add_argument(
             "--fast_dev_run", action="store_true", help="Test code only."
         )
         parser.add_argument(
