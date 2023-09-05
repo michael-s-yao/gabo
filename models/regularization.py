@@ -111,7 +111,7 @@ class Regularization(nn.Module):
             xp: samples from source distribution `p(x)`.
             xq: samples from target distribution `q(x)`.
         Returns:
-            LogLoss of source critic D.
+            Source critic loss L(xp, xq).
         """
         if self.method in ["gan_loss", "importance_weighting"]:
             return torch.mean(
