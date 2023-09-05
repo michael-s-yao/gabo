@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
 import pytorch_lightning as pl
-from typing import Sequence, Union
+from typing import Optional, Sequence, Union
 
 from models.block import Block
 from models.objective import Objective
@@ -111,6 +111,7 @@ class GeneratorModule(pl.LightningModule):
         z_dim: int = 128,
         x_dim: Sequence[int] = (1, 28, 28),
         lr: float = 0.0002,
+        clip: Optional[float] = None,
         beta1: float = 0.5,
         beta2: float = 0.999,
         num_images_logged: int = 8,
@@ -128,6 +129,7 @@ class GeneratorModule(pl.LightningModule):
             x_dim: dimensions CHW of the output image from the generator G.
                 Default MNIST dimensions (1, 28, 28).
             lr: learning rate. Default 0.0002.
+            clip: gradient clipping. Default no clipping.
             beta1: beta_1 parameter in Adam optimizer algorithm. Default 0.5.
             beta2: beta_2 parameter in Adam optimizer algorithm. Default 0.999.
             num_images_logged: number of images to log per training and
@@ -202,6 +204,12 @@ class GeneratorModule(pl.LightningModule):
             loss_G += (self.hparams.alpha) * self.regularization(xp, xq)
         self.log("loss_G", loss_G, prog_bar=True, sync_dist=True)
         self.manual_backward(loss_G, retain_graph=bool(optimizer_D))
+        if self.hparams.clip:
+            self.clip_gradients(
+                optimizer_G,
+                gradient_clip_val=self.hparams.clip,
+                gradient_clip_algorithm="norm"
+            )
         optimizer_G.step()
         optimizer_G.zero_grad()
         self.untoggle_optimizer(optimizer_G)
@@ -211,6 +219,12 @@ class GeneratorModule(pl.LightningModule):
             loss_D = self.loss_D(xp, xq.detach())
             self.log("loss_D", loss_D, prog_bar=True, sync_dist=True)
             self.manual_backward(loss_D)
+            if self.hparams.clip:
+                self.clip_gradients(
+                    optimizer_D,
+                    gradient_clip_val=self.hparams.clip,
+                    gradient_clip_algorithm="norm"
+                )
             optimizer_D.step()
             optimizer_D.zero_grad()
             self.untoggle_optimizer(optimizer_D)

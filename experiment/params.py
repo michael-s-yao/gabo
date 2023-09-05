@@ -37,6 +37,13 @@ class Experiment:
             help="Relative regularization weighting. Default 0.5."
         )
         parser.add_argument(
+            "--regularization",
+            default="gan_loss",
+            type=str,
+            choices=("gan_loss", "wasserstein_distance"),
+            help="In-distribution regularization. Default `gan_loss`."
+        )
+        parser.add_argument(
             "--resume_from",
             "--ckpt",
             default=None,

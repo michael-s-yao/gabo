@@ -30,7 +30,9 @@ def main():
     model = GeneratorModule(
         objective=exp.objective,
         alpha=exp.alpha,
+        regularization=exp.regularization,
         lr=exp.lr,
+        clip=exp.clip,
         beta1=beta1,
         beta2=beta2,
         num_images_logged=exp.num_images_logged
@@ -64,7 +66,6 @@ def main():
         callbacks=callbacks,
         deterministic=True,
         fast_dev_run=exp.fast_dev_run,
-        gradient_clip_val=exp.clip,
         strategy=strategy
     )
 
