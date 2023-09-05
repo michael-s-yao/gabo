@@ -1,6 +1,6 @@
 """
 Defines a generator that optimizes against an objective with optional source
-discriminator regularization.
+critic regularization.
 
 Author(s):
     Michael Yao
@@ -99,8 +99,8 @@ class Generator(nn.Module):
 
 class GeneratorModule(pl.LightningModule):
     """
-    Generator that optimizes against an objective with optional source
-    discriminator regularization.
+    Generator that optimizes against an objective with optional source critic
+    regularization.
     """
 
     def __init__(
@@ -120,10 +120,10 @@ class GeneratorModule(pl.LightningModule):
         """
         Args:
             objective: objective function to optimize the generator against.
-            alpha: source discriminator regularization weighting term.
-                Default no source discriminator regularization.
+            alpha: source critic regularization weighting term. Default no
+                source critic regularization.
             regularization: method of regularization. One of [`None`, `fid`,
-                `gan_loss`, `importance_weighting`, `wasserstein_distance`].
+                `gan_loss`, `importance_weighting`, `wasserstein`, `em`].
             z_dim: number of latent dimensions as input to the generator G.
                 Default 128.
             x_dim: dimensions CHW of the output image from the generator G.
@@ -151,7 +151,7 @@ class GeneratorModule(pl.LightningModule):
                 method=regularization,
                 x_dim=self.hparams.x_dim
             )
-            self.loss_D = self.regularization.loss_D
+            self.critic_loss = self.regularization.critic_loss
 
         self.objective = None
         if self.hparams.alpha < 1.0:
@@ -216,7 +216,7 @@ class GeneratorModule(pl.LightningModule):
 
         if optimizer_D:
             self.toggle_optimizer(optimizer_D)
-            loss_D = self.loss_D(xp, xq.detach())
+            loss_D = self.critic_loss(xp, xq.detach())
             self.log("loss_D", loss_D, prog_bar=True, sync_dist=True)
             self.manual_backward(loss_D)
             if self.hparams.clip:
@@ -228,6 +228,9 @@ class GeneratorModule(pl.LightningModule):
             optimizer_D.step()
             optimizer_D.zero_grad()
             self.untoggle_optimizer(optimizer_D)
+
+        if hasattr(self.regularization, "f"):
+            self.regularization.clip()
 
     def validation_step(
         self, batch: Sequence[torch.Tensor], batch_idx: int
@@ -295,6 +298,17 @@ class GeneratorModule(pl.LightningModule):
         Returns:
             Sequence of optimizer(s).
         """
+        if self.regularization and (
+            self.hparams.regularization in ["wasserstein", "em"]
+        ):
+            optimizer_G = optim.RMSprop(
+                self.generator.parameters(), lr=self.hparams.lr
+            )
+            optimizer_D = optim.RMSprop(
+                self.regularization.f.parameters(), lr=self.hparams.lr
+            )
+            return [optimizer_G, optimizer_D]
+
         optimizer_G = optim.Adam(
             self.generator.parameters(),
             lr=self.hparams.lr,

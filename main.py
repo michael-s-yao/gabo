@@ -27,10 +27,14 @@ def main():
     datamodule = MNISTDataModule(
         batch_size=exp.batch_size, num_workers=exp.num_workers, seed=exp.seed
     )
+    opt_alg = "Adam"
+    if exp.regularization in ["wasserstein", "em"]:
+        opt_alg = "RMSProp"
     model = GeneratorModule(
         objective=exp.objective,
         alpha=exp.alpha,
         regularization=exp.regularization,
+        opt_alg=opt_alg,
         lr=exp.lr,
         clip=exp.clip,
         beta1=beta1,

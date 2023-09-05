@@ -8,9 +8,9 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch
 import torch.nn as nn
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
-from models.discriminator import Discriminator
+from models.critic import Critic, WeightClipper
 
 
 class Regularization(nn.Module):
@@ -20,22 +20,25 @@ class Regularization(nn.Module):
         self,
         method: Optional[str] = None,
         x_dim: Optional[Tuple[int]] = (1, 28, 28),
-        p: Optional[Union[int, str]] = 1
+        c: Optional[float] = 0.01
     ):
         """
         Args:
             method: method of regularization. One of [`None`, `fid`,
-                `gan_loss`, `importance_weighting`, `wasserstein_distance`].
+                `gan_loss`, `importance_weighting`, `wasserstein`, `em`].
             x_dim: dimensions CHW of the output image from the generator G.
                 Default MNIST dimensions (1, 28, 28).
-            p: Wasserstein distance norm. p >= 1 or p == `inf`. Must be
-                provided if the method of Regularization is
-                `_wasserstein_distance`.
+            c: weight clipping to enforce 1-Lipschitz condition on source
+                critic for `wasserstein`/`em` regularization algorithms.
         """
         super().__init__()
-        self.method = method
-        self.D = Discriminator(x_dim=x_dim)
-        self.p = p
+        self.method = method.lower() if method else method
+        if self.method in ["gan_loss", "importance_weighting"]:
+            self.D = Critic(x_dim=x_dim, use_sigmoid=True)
+        elif self.method in ["wasserstein", "em"]:
+            self.f = Critic(x_dim=x_dim, use_sigmoid=False)
+            self.clipper = WeightClipper(c=c)
+            self.clip()
 
     def forward(
         self, xp: torch.Tensor, xq: Optional[torch.Tensor] = None
@@ -50,13 +53,13 @@ class Regularization(nn.Module):
         if self.method is None or self.method == "":
             return 0.0
 
-        if self.method.lower() == "gan_loss":
+        if self.method == "gan_loss":
             return torch.mean(self._gan_loss(xq))
-        elif self.method.lower() == "importance_weighting":
-            return torch.mean(self._importance_weight(xp)) - 1.0
-        elif self.method.lower() == "wasserstein_distance":
-            return torch.mean(self._wasserstein_distance(xp, xq))
-        elif self.method.lower() == "fid":
+        elif self.method == "importance_weighting":
+            return torch.mean(torch.square(self._importance_weight(xp) - 1.0))
+        elif self.method in ["wasserstein", "em"]:
+            return self._wasserstein_distance_1(xp, xq)
+        elif self.method == "fid":
             return self._fid(xp, xq)
         else:
             raise NotImplementedError(
@@ -65,7 +68,7 @@ class Regularization(nn.Module):
 
     def _gan_loss(self, xq: torch.Tensor) -> torch.Tensor:
         """
-        Computes the log of the source discriminator output on the generated
+        Computes the negative log of the source critic output on the generated
         samples `xq` from `q(x)`.
         Input:
             xq: samples from source distribution `q(x)`.
@@ -77,7 +80,7 @@ class Regularization(nn.Module):
     def _importance_weight(self, xp: torch.Tensor) -> torch.Tensor:
         """
         Computes the estimated importance weights w(x) = q(x) / p(x) given `xp`
-        samples from `p(x)` and a source discriminator.
+        samples from `p(x)` and a source critic.
         Input:
             xp: samples from source distribution `p(x)`.
         Returns:
@@ -85,31 +88,44 @@ class Regularization(nn.Module):
         """
         return (1.0 / self.D(xp)) - 1.0
 
-    def _wasserstein_distance(
+    def _wasserstein_distance_1(
         self, xp: torch.Tensor, xq: torch.Tensor
     ) -> torch.Tensor:
         """
-        Computes the empirical p-Wasserstein distance between `xp` samples from
-        `p(x)` and `xq` samples from `q(x)`.
+        Estimates the 1-Wasserstein distance (i.e., Earth-Mover distance)
+        between `p(x)` and `q(x)` using `xp` samples from `p(x)` and `xq`
+        samples from `q(x)`.
         Input:
             xp: samples from source distribution `p(x)`.
             xq: samples from target distribution `q(x)`.
         Returns:
-            Empirical p-Wasserstein distance between `p(x)` and `q(x)`.
+            Empirical 1-Wasserstein distance between `p(x)` and `q(x)`.
         """
-        # TODO: Implement Wasserstein distance.
-        return 0
+        self.clip()
+        return torch.mean(self.f(xp)) - torch.mean(self.f(xq))
 
-    def loss_D(self, xp: torch.Tensor, xq: torch.Tensor) -> torch.Tensor:
+    def critic_loss(self, xp: torch.Tensor, xq: torch.Tensor) -> torch.Tensor:
         """
-        Source discriminator D loss.
+        Source critic loss function implementation.
         Input:
             xp: samples from source distribution `p(x)`.
             xq: samples from target distribution `q(x)`.
         Returns:
-            Loss of source discriminator.
+            LogLoss of source critic D.
         """
+        if self.method in ["gan_loss", "importance_weighting"]:
+            return torch.mean(
+                -0.5 * (torch.log(self.D(xp)) + torch.log(1.0 - self.D(xq)))
+            )
+        elif self.method in ["wasserstein", "em"]:
+            return -1.0 * self._wasserstein_distance_1(xp, xq)
 
-        return torch.mean(
-            -0.5 * (torch.log(self.D(xp)) + torch.log(1.0 - self.D(xq)))
-        )
+    def clip(self) -> torch.Tensor:
+        """
+        Clips the weights of self.f to [-self.clipper, self.clipper].
+        Input:
+            None.
+        Returns:
+            None.
+        """
+        self.f.apply(self.clipper)
