@@ -201,7 +201,7 @@ class GeneratorModule(pl.LightningModule):
         z = torch.randn((B, self.hparams.z_dim)).to(xp)
         xq = self(z)
 
-        if batch_idx % f_G == 0:
+        if batch_idx % self.f_G == 0:
             self.toggle_optimizer(optimizer_G)
             if self.hparams.num_images_logged and self.logger:
                 self.logger.log_image(
@@ -228,7 +228,7 @@ class GeneratorModule(pl.LightningModule):
             optimizer_G.zero_grad()
             self.untoggle_optimizer(optimizer_G)
 
-        if optimizer_D and batch_idx % f_D == 0:
+        if optimizer_D and batch_idx % self.f_D == 0:
             self.toggle_optimizer(optimizer_D)
             loss_D = self.critic_loss(xp, xq.detach())
             self.log("loss_D", loss_D, prog_bar=True, sync_dist=True)
