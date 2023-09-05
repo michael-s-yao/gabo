@@ -114,6 +114,7 @@ class GeneratorModule(pl.LightningModule):
         clip: Optional[float] = None,
         beta1: float = 0.5,
         beta2: float = 0.999,
+        n_critic_per_generator: float = 1.0,
         num_images_logged: int = 8,
         **kwargs
     ):
@@ -132,6 +133,8 @@ class GeneratorModule(pl.LightningModule):
             clip: gradient clipping. Default no clipping.
             beta1: beta_1 parameter in Adam optimizer algorithm. Default 0.5.
             beta2: beta_2 parameter in Adam optimizer algorithm. Default 0.999.
+            n_critic_per_generator: number of times to optimize the critic
+                versus the generator. Default 1.0.
             num_images_logged: number of images to log per training and
                 validation step. Can also use this parameter to set the *total*
                 number of images to log during model testing.
@@ -152,10 +155,19 @@ class GeneratorModule(pl.LightningModule):
                 x_dim=self.hparams.x_dim
             )
             self.critic_loss = self.regularization.critic_loss
+        else:
+            self.hparams.n_critic_per_generator = 1.0
 
         self.objective = None
         if self.hparams.alpha < 1.0:
             self.objective = Objective(objective, x_dim=x_dim)
+
+        if self.hparams.n_critic_per_generator >= 1.0:
+            self.f_G, self.f_D = round(self.hparams.n_critic_per_generator), 1
+        else:
+            self.f_G, self.f_D = 1, round(
+                1.0 / self.hparams.n_critic_per_generator
+            )
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -187,34 +199,36 @@ class GeneratorModule(pl.LightningModule):
             optimizer_G, optimizer_D = self.optimizers(), None
 
         z = torch.randn((B, self.hparams.z_dim)).to(xp)
-
-        self.toggle_optimizer(optimizer_G)
         xq = self(z)
 
-        if self.hparams.num_images_logged and self.logger:
-            self.logger.log_image(
-                "generated_images",
-                images=[xq[i] for i in range(self.hparams.num_images_logged)]
-            )
+        if batch_idx % f_G == 0:
+            self.toggle_optimizer(optimizer_G)
+            if self.hparams.num_images_logged and self.logger:
+                self.logger.log_image(
+                    "generated_images",
+                    images=[
+                        xq[i] for i in range(self.hparams.num_images_logged)
+                    ]
+                )
 
-        loss_G = 0.0
-        if self.objective:
-            loss_G += (self.hparams.alpha - 1.0) * self.objective(xq)
-        if self.regularization:
-            loss_G += (self.hparams.alpha) * self.regularization(xp, xq)
-        self.log("loss_G", loss_G, prog_bar=True, sync_dist=True)
-        self.manual_backward(loss_G, retain_graph=bool(optimizer_D))
-        if self.hparams.clip:
-            self.clip_gradients(
-                optimizer_G,
-                gradient_clip_val=self.hparams.clip,
-                gradient_clip_algorithm="norm"
-            )
-        optimizer_G.step()
-        optimizer_G.zero_grad()
-        self.untoggle_optimizer(optimizer_G)
+            loss_G = 0.0
+            if self.objective:
+                loss_G += (self.hparams.alpha - 1.0) * self.objective(xq)
+            if self.regularization:
+                loss_G += (self.hparams.alpha) * self.regularization(xp, xq)
+            self.log("loss_G", loss_G, prog_bar=True, sync_dist=True)
+            self.manual_backward(loss_G, retain_graph=bool(optimizer_D))
+            if self.hparams.clip:
+                self.clip_gradients(
+                    optimizer_G,
+                    gradient_clip_val=self.hparams.clip,
+                    gradient_clip_algorithm="norm"
+                )
+            optimizer_G.step()
+            optimizer_G.zero_grad()
+            self.untoggle_optimizer(optimizer_G)
 
-        if optimizer_D:
+        if optimizer_D and batch_idx % f_D == 0:
             self.toggle_optimizer(optimizer_D)
             loss_D = self.critic_loss(xp, xq.detach())
             self.log("loss_D", loss_D, prog_bar=True, sync_dist=True)

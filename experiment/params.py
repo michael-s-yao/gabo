@@ -68,6 +68,12 @@ class Experiment:
             help="Gradient clipping. Default no clipping."
         )
         parser.add_argument(
+            "--n_critic_per_generator",
+            default=1.0,
+            type=float,
+            help="Number of times to optimize the critic versus the generator."
+        )
+        parser.add_argument(
             "--num_epochs",
             default=200,
             type=int,

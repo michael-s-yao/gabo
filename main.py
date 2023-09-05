@@ -39,6 +39,7 @@ def main():
         clip=exp.clip,
         beta1=beta1,
         beta2=beta2,
+        n_critic_per_generator=exp.n_critic_per_generator,
         num_images_logged=exp.num_images_logged
     )
 
