@@ -199,7 +199,7 @@ class GeneratorModule(pl.LightningModule):
 
         loss_G = 0.0
         if self.objective:
-            loss_G += (1.0 - self.hparams.alpha) * self.objective(xq)
+            loss_G += (self.hparams.alpha - 1.0) * self.objective(xq)
         if self.regularization:
             loss_G += (self.hparams.alpha) * self.regularization(xp, xq)
         self.log("loss_G", loss_G, prog_bar=True, sync_dist=True)
