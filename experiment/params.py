@@ -40,7 +40,13 @@ class Experiment:
             "--regularization",
             default="gan_loss",
             type=str,
-            choices=("gan_loss", "wasserstein", "em"),
+            choices=(
+                "gan_loss",
+                "importance_weighting",
+                "log_importance_weighting",
+                "wasserstein",
+                "em"
+            ),
             help="In-distribution regularization. Default `gan_loss`."
         )
         parser.add_argument(

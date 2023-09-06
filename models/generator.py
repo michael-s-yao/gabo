@@ -124,7 +124,8 @@ class GeneratorModule(pl.LightningModule):
             alpha: source critic regularization weighting term. Default no
                 source critic regularization.
             regularization: method of regularization. One of [`None`, `fid`,
-                `gan_loss`, `importance_weighting`, `wasserstein`, `em`].
+                `gan_loss`, `importance_weighting`, `log_importance_weighting`,
+                `wasserstein`, `em`].
             z_dim: number of latent dimensions as input to the generator G.
                 Default 128.
             x_dim: dimensions CHW of the output image from the generator G.

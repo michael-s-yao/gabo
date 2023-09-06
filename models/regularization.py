@@ -25,7 +25,8 @@ class Regularization(nn.Module):
         """
         Args:
             method: method of regularization. One of [`None`, `gan_loss`,
-                `importance_weighting`, `wasserstein`, `em`].
+                `importance_weighting`, `log_importance_weighting`,
+                `wasserstein`, `em`].
             x_dim: dimensions CHW of the output image from the generator G.
                 Default MNIST dimensions (1, 28, 28).
             c: weight clipping to enforce 1-Lipschitz condition on source
@@ -33,7 +34,9 @@ class Regularization(nn.Module):
         """
         super().__init__()
         self.method = method.lower() if method else method
-        if self.method in ["gan_loss", "importance_weighting"]:
+        if self.method in [
+            "gan_loss", "importance_weighting", "log_importance_weighting"
+        ]:
             self.D = Critic(x_dim=x_dim, use_sigmoid=True)
         elif self.method in ["wasserstein", "em"]:
             self.f = Critic(x_dim=x_dim, use_sigmoid=False)
@@ -56,7 +59,21 @@ class Regularization(nn.Module):
         if self.method == "gan_loss":
             return torch.mean(self._gan_loss(xq))
         elif self.method == "importance_weighting":
-            return torch.mean(torch.square(self._importance_weight(xp) - 1.0))
+            w_xp = torch.mean(torch.square(self._importance_weight(xp) - 1.0))
+            w_xq = torch.mean(torch.square(self._importance_weight(xq) - 1.0))
+            return 0.5 * (w_xp + w_xq)
+        elif self.method == "log_importance_weighting":
+            log_w_xp = 2.0 * torch.mean(
+                torch.log(torch.abs(1.0 - (2.0 * self.D(xp)))) - torch.log(
+                    self.D(xp)
+                )
+            )
+            log_w_xq = 2.0 * torch.mean(
+                torch.log(torch.abs(1.0 - (2.0 * self.D(xq)))) - torch.log(
+                    self.D(xq)
+                )
+            )
+            return 0.5 * (log_w_xp + log_w_xq)
         elif self.method in ["wasserstein", "em"]:
             return self._wasserstein_distance_1(xp, xq)
         else:
@@ -75,16 +92,15 @@ class Regularization(nn.Module):
         """
         return -1.0 * torch.log(self.D(xq))
 
-    def _importance_weight(self, xp: torch.Tensor) -> torch.Tensor:
+    def _importance_weight(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Computes the estimated importance weights w(x) = q(x) / p(x) given `xp`
-        samples from `p(x)` and a source critic.
+        Computes the estimated importance weights w(x) = q(x) / p(x).
         Input:
-            xp: samples from source distribution `p(x)`.
+            x: inputs at which to estimate the importance weight.
         Returns:
-            Estimated importance weights at those values of x.
+            Estimated importance weights - 1.0 at those values of x.
         """
-        return (1.0 / self.D(xp)) - 1.0
+        return (1.0 / self.D(x)) - 1.0
 
     def _wasserstein_distance_1(
         self, xp: torch.Tensor, xq: torch.Tensor
@@ -111,9 +127,11 @@ class Regularization(nn.Module):
         Returns:
             Source critic loss L(xp, xq).
         """
-        if self.method in ["gan_loss", "importance_weighting"]:
+        if self.method in [
+            "gan_loss", "importance_weighting", "log_importance_weighting"
+        ]:
             return torch.mean(
-                -0.5 * (torch.log(self.D(xp)) + torch.log(1.0 - self.D(xq)))
+                -1.0 * (torch.log(self.D(xp)) + torch.log(1.0 - self.D(xq)))
             )
         elif self.method in ["wasserstein", "em"]:
             return -1.0 * self._wasserstein_distance_1(xp, xq)
