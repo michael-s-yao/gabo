@@ -49,8 +49,8 @@ def build_args() -> argparse.Namespace:
     parser.add_argument(
         "--savepath",
         type=str,
-        default="./montage.png",
-        help="File path to save montage to. Default `./montage.png`."
+        default=None,
+        help="File path to save montage to. Default not saved."
     )
     parser.add_argument(
         "--title",
@@ -60,6 +60,11 @@ def build_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--seed", default=42, type=int, help="Random seed. Default 42."
+    )
+    parser.add_argument(
+        "--with_colorbar",
+        action="store_true",
+        help="Whether to include a colorbar with the montage."
     )
 
     return parser.parse_args()
@@ -71,7 +76,8 @@ def create_montage(
     seed: int = 42,
     model: Optional[Union[Path, str]] = None,
     savepath: Optional[Union[Path, str]] = "./montage.png",
-    title: Optional[str] = None
+    title: Optional[str] = None,
+    with_colorbar: bool = False
 ) -> None:
     """
     Creates a montage of HxW generated images.
@@ -83,6 +89,7 @@ def create_montage(
             images is generated.
         savepath: file path to save montage to. Default `./montage.png`.
         title: optional title for the montage. Default no title.
+        with_colorbar: whether to include a colorbar with the montage.
     Returns:
         None.
     """
@@ -117,6 +124,8 @@ def create_montage(
     plt.plot()
     plt.imshow(montage.detach().numpy(), cmap="gray")
     plt.axis("off")
+    if with_colorbar:
+        plt.colorbar()
     if title:
         plt.title(title)
 
@@ -138,5 +147,6 @@ if __name__ == "__main__":
         seed=args.seed,
         model=args.ckpt,
         savepath=args.savepath,
-        title=args.title
+        title=args.title,
+        with_colorbar=args.with_colorbar
     )

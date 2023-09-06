@@ -24,8 +24,8 @@ class Regularization(nn.Module):
     ):
         """
         Args:
-            method: method of regularization. One of [`None`, `fid`,
-                `gan_loss`, `importance_weighting`, `wasserstein`, `em`].
+            method: method of regularization. One of [`None`, `gan_loss`,
+                `importance_weighting`, `wasserstein`, `em`].
             x_dim: dimensions CHW of the output image from the generator G.
                 Default MNIST dimensions (1, 28, 28).
             c: weight clipping to enforce 1-Lipschitz condition on source
@@ -59,8 +59,6 @@ class Regularization(nn.Module):
             return torch.mean(torch.square(self._importance_weight(xp) - 1.0))
         elif self.method in ["wasserstein", "em"]:
             return self._wasserstein_distance_1(xp, xq)
-        elif self.method == "fid":
-            return self._fid(xp, xq)
         else:
             raise NotImplementedError(
                 f"Regularization method {self.method} not implemented."
