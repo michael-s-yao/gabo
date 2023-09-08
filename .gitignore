@@ -116,3 +116,6 @@ progress/
 data/MNIST/
 data/__pycache__/
 *.tar.gz
+data/molecules/train_selfie
+data/molecules/val_selfie
+data/molecules/test_selfie

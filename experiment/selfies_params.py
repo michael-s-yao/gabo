@@ -1,5 +1,5 @@
 """
-Experimental parameter class.
+Experimental parameter class for SELFIES molecule generation task.
 
 Author(s):
     Michael Yao
@@ -18,17 +18,14 @@ class Experiment:
             None.
         """
         parser = argparse.ArgumentParser(
-            description="OOD Optimization Experiments"
+            description="Molecule Generation OOD Optimization Experiments"
         )
 
-        objective_help = "Objective function to optimize against. "
-        objective_help += "One of [`gradient`, `energy`]."
         parser.add_argument(
             "--objective",
             type=str,
             required=True,
-            choices=("gradient", "grad", "energy"),
-            help=objective_help
+            help="Objective function to optimize against."
         )
         parser.add_argument(
             "--alpha",
@@ -63,9 +60,9 @@ class Experiment:
             help="Learning rate. Default 0.0002."
         )
         beta_help = "Beta parameters for Adam optimizer. "
-        beta_help += "Default beta_1 = 0.5, beta_2 = 0.999."
+        beta_help += "Default beta_1 = 0.9, beta_2 = 0.999."
         parser.add_argument(
-            "--beta", default=[0.5, 0.999], type=float, nargs=2, help=beta_help
+            "--beta", default=[0.9, 0.999], type=float, nargs=2, help=beta_help
         )
         parser.add_argument(
             "--clip",
@@ -93,9 +90,9 @@ class Experiment:
         )
         parser.add_argument(
             "--batch_size",
-            default=256,
+            default=64,
             type=int,
-            help="Batch size. Default 256."
+            help="Batch size. Default 64."
         )
         parser.add_argument(
             "--seed", default=42, type=int, help="Random seed. Default 42."
@@ -115,12 +112,6 @@ class Experiment:
             type=str,
             choices=("train", "test", "both"),
             help="Whether to train the model, test a model, or both."
-        )
-        parser.add_argument(
-            "--num_images_logged",
-            default=8,
-            type=int,
-            help="Number of images to log. Default 8."
         )
         parser.add_argument(
             "--find_unused_parameters",
