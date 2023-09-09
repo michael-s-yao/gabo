@@ -36,7 +36,7 @@ class SELFIESVAEModule(pl.LightningModule):
         objective: str,
         alpha: float = 0.0,
         KLD_alpha: float = 1e-5,
-        regularization: str = "wasserstein",
+        regularization: str = "elbo",
         z_dim: int = 256,
         lr: int = 0.0001,
         clip: Optional[float] = None,
@@ -54,7 +54,7 @@ class SELFIESVAEModule(pl.LightningModule):
         KLD_alpha: weighting of KL Divergence in ELBO loss calculation.
         regularization: method of regularization. One of [`None`, `fid`,
             `gan_loss`, `importance_weighting`, `log_importance_weighting`,
-            `wasserstein`, `em`].
+            `wasserstein`, `em`, `elbo`].
         z_dim: number of latent space dimensions in the VAE. Default 256.
         lr: learning rate. Default 0.0002.
         clip: gradient clipping. Default no clipping.
@@ -71,13 +71,10 @@ class SELFIESVAEModule(pl.LightningModule):
         self.encoder = VAEEncoder(in_dim, z_dim)
         self.decoder = VAEDecoder(z_dim, out_dim)
 
-        self.elbo = ELBO(self.hparams.KLD_alpha)
-
         self.regularization = None
         if self.hparams.alpha > 0.0:
             self.regularization = Regularization(
-                method=regularization,
-                x_dim=self.hparams.x_dim
+                method=regularization, x_dim=(in_dim,), KLD_alpha=KLD_alpha
             )
             self.critic_loss = self.regularization.critic_loss
         else:
@@ -134,7 +131,13 @@ class SELFIESVAEModule(pl.LightningModule):
             self.toggle_optimizer(optimizer_vae)
 
             out, mu, log_var = self(batch)
-            loss_vae = self.elbo(batch, out, mu, log_var)
+            loss_vae = 0.0
+            if self.objective:
+                loss_vae += (self.hparams.alpha - 1.0) * self.objective(xq)
+            if self.regularization:
+                loss_vae += (self.hparams.alpha) * self.regularization(
+                    xp, xq, mu, log_var
+                )
             self.log("loss_vae", loss_vae, prog_bar=True, sync_dist=True)
             self.manual_backward(loss_vae, retain_graph=bool(optimizer_D))
             if self.hparams.clip:
@@ -204,11 +207,24 @@ class SELFIESVAEModule(pl.LightningModule):
         Returns:
             Sequence of optimizer(s).
         """
+        vae_params = list(self.encoder.parameters()) + list(self.decoder.parameters())
+
+        if self.regularization and (
+            self.hparams.regularization in ["wasserstein", "em"]
+        ):
+            optimizer_vae = optim.RMSprop(vae_params, lr=self.hparams.lr)
+            optimizer_D = optim.RMSprop(
+                self.regularization.f.parameters(), lr=self.hparams.lr
+            )
+            return [optimizer_vae, optimizer_D]
+
         optimizer_vae = optim.Adam(
-            list(self.encoder.parameters()) + list(self.decoder.parameters()),
+            vae_params,
             lr=self.hparams.lr,
             betas=(self.hparams.beta1, self.hparams.beta2)
         )
+        if self.hparams.regularization == "elbo":
+            return [optimizer_vae]
 
         if self.regularization:
             optimizer_D = optim.Adam(

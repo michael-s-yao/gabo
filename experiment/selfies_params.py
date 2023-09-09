@@ -35,14 +35,15 @@ class Experiment:
         )
         parser.add_argument(
             "--regularization",
-            default="gan_loss",
+            default="elbo",
             type=str,
             choices=(
                 "gan_loss",
                 "importance_weighting",
                 "log_importance_weighting",
                 "wasserstein",
-                "em"
+                "em",
+                "elbo"
             ),
             help="In-distribution regularization. Default `gan_loss`."
         )

@@ -20,17 +20,20 @@ class Regularization(nn.Module):
         self,
         method: Optional[str] = None,
         x_dim: Optional[Tuple[int]] = (1, 28, 28),
-        c: Optional[float] = 0.01
+        c: Optional[float] = 0.01,
+        KLD_alpha: Optional[float] = 1e-5
     ):
         """
         Args:
             method: method of regularization. One of [`None`, `gan_loss`,
                 `importance_weighting`, `log_importance_weighting`,
-                `wasserstein`, `em`].
+                `wasserstein`, `em`, `elbo`].
             x_dim: dimensions CHW of the output image from the generator G.
                 Default MNIST dimensions (1, 28, 28).
             c: weight clipping to enforce 1-Lipschitz condition on source
                 critic for `wasserstein`/`em` regularization algorithms.
+            KLD_alpha: weighting of KL Divergence loss term, only applicable
+                if `method` is `elbo`. Default 1e-5.
         """
         super().__init__()
         self.method = method.lower() if method else method
@@ -42,16 +45,26 @@ class Regularization(nn.Module):
             self.f = Critic(x_dim=x_dim, use_sigmoid=False)
             self.clipper = WeightClipper(c=c)
             self.clip()
+        elif self.method == "elbo":
+            self.KLD_alpha = KLD_alpha
+            self.recon_loss = nn.CrossEntropyLoss()
 
     def forward(
-        self, xp: torch.Tensor, xq: Optional[torch.Tensor] = None
+        self,
+        xp: torch.Tensor,
+        xq: Optional[torch.Tensor] = None,
+        mu: Optional[torch.Tensor] = None,
+        log_var: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Forward propagation through a regularization function.
         Input:
-            xp
+            xp: samples from the source distribution `p(x)`.
+            xq: samples from the target distribution `q(x)`.
+            mu: encoded mean in the latent space.
+            log_var: encoded log of the variance in the latent space.
         Returns:
-            Generated sample x = G(z).
+            In-distribution regularization loss term.
         """
         if self.method is None or self.method == "":
             return 0.0
@@ -76,6 +89,8 @@ class Regularization(nn.Module):
             return 0.5 * (log_w_xp + log_w_xq)
         elif self.method in ["wasserstein", "em"]:
             return self._wasserstein_distance_1(xp, xq)
+        elif self.method == "elbo":
+            return self._elbo(xp, xq, mu, log_var)
         else:
             raise NotImplementedError(
                 f"Regularization method {self.method} not implemented."
@@ -118,7 +133,35 @@ class Regularization(nn.Module):
         self.clip()
         return torch.mean(self.f(xp)) - torch.mean(self.f(xq))
 
-    def critic_loss(self, xp: torch.Tensor, xq: torch.Tensor) -> torch.Tensor:
+    def _elbo(
+        self,
+        xp: torch.Tensor,
+        xq: torch.Tensor,
+        mu: torch.Tensor,
+        log_var: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Calculates the ELBO loss.
+        Input:
+            xp: original input tensor to the VAE from the source distribution
+                `p(x)`.
+            xq: reconstructed tensor output from the VAE from the target
+                distribution `q(x)`.
+            mu: encoded mean in the latent space.
+            log_var: encoded log of the variance in the latent space.
+        Returns:
+            Calculated ELBO loss.
+        """
+        recon_loss = self.recon_loss(
+            xq.reshape(-1, xq.size(2)),
+            torch.argmax(xp.reshape(-1, xp.size(2)), dim=1)
+        )
+        kld = -0.5 * torch.mean(1.0 + log_var - (mu * mu) - torch.exp(log_var))
+        return recon_loss + (self.KLD_alpha * kld)
+
+    def critic_loss(
+        self, xp: torch.Tensor, xq: torch.Tensor
+    ) -> Optional[torch.Tensor]:
         """
         Source critic loss function implementation.
         Input:
@@ -135,6 +178,8 @@ class Regularization(nn.Module):
             )
         elif self.method in ["wasserstein", "em"]:
             return -1.0 * self._wasserstein_distance_1(xp, xq)
+        else:
+            return None
 
     def clip(self) -> torch.Tensor:
         """
