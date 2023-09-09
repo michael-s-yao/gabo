@@ -21,7 +21,6 @@ import torch.optim as optim
 import pytorch_lightning as pl
 from typing import Optional, Sequence
 
-from models.elbo import ELBO
 from models.objective import SELFIEObjective
 from models.regularization import Regularization
 
@@ -133,10 +132,10 @@ class SELFIESVAEModule(pl.LightningModule):
             out, mu, log_var = self(batch)
             loss_vae = 0.0
             if self.objective:
-                loss_vae += (self.hparams.alpha - 1.0) * self.objective(xq)
+                loss_vae += (self.hparams.alpha - 1.0) * self.objective(out)
             if self.regularization:
                 loss_vae += (self.hparams.alpha) * self.regularization(
-                    xp, xq, mu, log_var
+                    batch, out, mu, log_var
                 )
             self.log("loss_vae", loss_vae, prog_bar=True, sync_dist=True)
             self.manual_backward(loss_vae, retain_graph=bool(optimizer_D))
@@ -207,7 +206,9 @@ class SELFIESVAEModule(pl.LightningModule):
         Returns:
             Sequence of optimizer(s).
         """
-        vae_params = list(self.encoder.parameters()) + list(self.decoder.parameters())
+        vae_params = list(self.encoder.parameters()) + list(
+            self.decoder.parameters()
+        )
 
         if self.regularization and (
             self.hparams.regularization in ["wasserstein", "em"]
