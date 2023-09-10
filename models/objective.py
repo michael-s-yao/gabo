@@ -13,6 +13,27 @@ import torchmetrics.functional.image as F
 from typing import Tuple
 
 
+class SELFIESObjective(nn.Module):
+    """Objective function to optimize for molecule generation."""
+
+    def __init__(self):
+        """
+        Args:
+            None.
+        """
+        super().__init__()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward propagation to calculate the objective function value.
+        Input:
+            x: input tensor.
+        Returns:
+            Value of the objective function f(x).
+        """
+        return torch.mean(x)  # TODO
+
+
 class Objective(nn.Module):
     """Objective function implementations to optimize."""
 

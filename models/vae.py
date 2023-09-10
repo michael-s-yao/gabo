@@ -21,7 +21,7 @@ import torch.optim as optim
 import pytorch_lightning as pl
 from typing import Optional, Sequence
 
-from models.objective import SELFIEObjective
+from models.objective import SELFIESObjective
 from models.regularization import Regularization
 
 
@@ -81,7 +81,7 @@ class SELFIESVAEModule(pl.LightningModule):
 
         self.objective = None
         if self.hparams.alpha < 1.0:
-            self.objective = SELFIEObjective(objective, x_dim=in_dim)
+            self.objective = SELFIESObjective(objective, x_dim=in_dim)
 
         if self.hparams.n_critic_per_generator >= 1.0:
             self.f_G, self.f_D = round(self.hparams.n_critic_per_generator), 1
