@@ -21,7 +21,7 @@ from typing import Dict, Optional, Sequence, Union
 class SELFIESDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        root: Union[Path, str] = "./data/molecules",
+        root: Union[Path, str] = "./MolOOD/data",
         batch_size: int = 128,
         num_workers: int = os.cpu_count() // 2,
         max_molecule_length: int = 128,
@@ -29,7 +29,7 @@ class SELFIESDataModule(pl.LightningDataModule):
     ):
         """
         Args:
-            root: directory path to save the MNIST dataset to.
+            root: directory path.
             batch_size: batch size. Default 128.
             num_workers: number of workers. Default half the CPU count.
             max_molecule_length: maximum molecule length. Default 128.
@@ -45,19 +45,19 @@ class SELFIESDataModule(pl.LightningDataModule):
         self.max_molecule_length = max_molecule_length
 
         self.train = SELFIESDataset(
-            os.path.join(self.root, "train_selfie"),
+            os.path.join(self.root, "train_selfie.gz"),
             self.vocab,
             self.max_molecule_length,
             name="train"
         )
         self.val = SELFIESDataset(
-            os.path.join(self.root, "val_selfie"),
+            os.path.join(self.root, "val_selfie.gz"),
             self.vocab,
             self.max_molecule_length,
             name="val"
         )
         self.test = SELFIESDataset(
-            os.path.join(self.root, "test_selfie"),
+            os.path.join(self.root, "test_selfie.gz"),
             self.vocab,
             self.max_molecule_length,
             name="test"

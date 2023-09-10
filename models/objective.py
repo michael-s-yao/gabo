@@ -2,36 +2,83 @@
 Objective function to optimize.
 
 Author(s):
-    Michael Yao
+    Michael Yao @michael-s-yao
+    Yimeng Zeng @yimeng-zeng
+
+Adapted from Haydn Jones @haydn-jones molformers repo.
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import numpy as np
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torchmetrics.functional.image as F
-from typing import Tuple
+from typing import Dict, Tuple, Union
+
+from MolOOD.molformers.models.BaseRegressor import BaseRegressor
 
 
 class SELFIESObjective(nn.Module):
-    """Objective function to optimize for molecule generation."""
+    """Black-box objective function to optimize for molecule generation."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        vocab: Dict[str, int],
+        surrogate_ckpt: Union[Path, str],
+        encoder_dim: int = 256,
+        encoder_nhead: int = 8,
+        encoder_dim_ff: int = 1024,
+        encoder_num_layers: int = 6
+    ):
         """
         Args:
-            None.
+            vocab: vocabulary dictionary.
+            surrogate_ckpt: path to the ckpt for the trained surrogate
+                objective function.
+            encoder_dim: output dimensions from encoder. Default 256.
+            encoder_nhead: number of heads of the encoder. Default 8.
+            encoder_dim_ff: feed-forward encoder dimension. Default 1024.
+            encoder_num_layers: number of encoder layers. Default 6.
         """
         super().__init__()
+        self.model = BaseRegressor(
+            vocab,
+            d_enc=encoder_dim,
+            encoder_nhead=encoder_nhead,
+            encoder_dim_ff=encoder_dim_ff,
+            encoder_dropout=0.0,
+            encoder_num_layers=encoder_num_layers
+        )
+        self.surrogate_ckpt = surrogate_ckpt
+        model_state_dict = torch.load(self.surrogate_ckpt, map_location="cpu")
+        try:
+            self.model.load_state_dict(model_state_dict["state_dict"])
+        except RuntimeError:
+            prefix = "model."
+            alt_state_dict = {}
+            for key, item in model_state_dict["state_dict"].items():
+                key = key[len(prefix):] if key.startswith(prefix) else key
+                alt_state_dict[key] = item
+            self.model.load_state_dict(alt_state_dict)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         """
         Forward propagation to calculate the objective function value.
         Input:
-            x: input tensor.
+            tokens: input batch of token representations of molecules.
         Returns:
-            Value of the objective function f(x).
+            Value of the objective function for the input molecules.
         """
-        return torch.mean(x)  # TODO
+        encoding, pad_mask = self.model.encode(tokens)
+
+        # Average encoding over all tokens, excluding padding.
+        encoding = encoding.masked_fill(torch.unsqueeze(pad_mask, dim=-1), 0.0)
+        encoding = torch.sum(encoding, dim=1) / torch.sum(
+            ~pad_mask, dim=1, keepdim=True
+        )
+
+        return torch.squeeze(self.model.regressor(encoding), dim=1)
 
 
 class Objective(nn.Module):

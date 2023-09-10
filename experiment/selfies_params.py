@@ -22,12 +22,6 @@ class Experiment:
         )
 
         parser.add_argument(
-            "--objective",
-            type=str,
-            required=True,
-            help="Objective function to optimize against."
-        )
-        parser.add_argument(
             "--alpha",
             default=0.5,
             type=float,
@@ -53,6 +47,12 @@ class Experiment:
             default=None,
             type=str,
             help="Checkpoint file to resume training from. Default None."
+        )
+        parser.add_argument(
+            "--datadir",
+            default="./MolOOD/data",
+            type=str,
+            help="Data directory. Default `./MolOOD/data`."
         )
         parser.add_argument(
             "--lr",

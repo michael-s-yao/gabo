@@ -8,6 +8,7 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch
 import torch.nn as nn
+from torch.distributions import kl_divergence, Normal
 from typing import Optional, Tuple
 
 from models.critic import Critic, WeightClipper
@@ -54,15 +55,17 @@ class Regularization(nn.Module):
         xp: torch.Tensor,
         xq: Optional[torch.Tensor] = None,
         mu: Optional[torch.Tensor] = None,
-        log_var: Optional[torch.Tensor] = None
+        sigma: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Forward propagation through a regularization function.
         Input:
             xp: samples from the source distribution `p(x)`.
             xq: samples from the target distribution `q(x)`.
-            mu: encoded mean in the latent space.
-            log_var: encoded log of the variance in the latent space.
+            mu: encoded mean in the latent space. Only applicable to `elbo`
+                regularization method.
+            sigma: encoded standard deviation in the latent space. Only
+                applicable to `elbo` regularization method.
         Returns:
             In-distribution regularization loss term.
         """
@@ -90,7 +93,7 @@ class Regularization(nn.Module):
         elif self.method in ["wasserstein", "em"]:
             return self._wasserstein_distance_1(xp, xq)
         elif self.method == "elbo":
-            return self._elbo(xp, xq, mu, log_var)
+            return self._elbo(xp, xq, mu, sigma)
         else:
             raise NotImplementedError(
                 f"Regularization method {self.method} not implemented."
@@ -138,7 +141,7 @@ class Regularization(nn.Module):
         xp: torch.Tensor,
         xq: torch.Tensor,
         mu: torch.Tensor,
-        log_var: torch.Tensor
+        sigma: torch.Tensor
     ) -> torch.Tensor:
         """
         Calculates the ELBO loss.
@@ -148,15 +151,15 @@ class Regularization(nn.Module):
             xq: reconstructed tensor output from the VAE from the target
                 distribution `q(x)`.
             mu: encoded mean in the latent space.
-            log_var: encoded log of the variance in the latent space.
+            sigma: encoded standard deviation in the latent space.
         Returns:
             Calculated ELBO loss.
         """
-        recon_loss = self.recon_loss(
-            xq.reshape(-1, xq.size(2)),
-            torch.argmax(xp.reshape(-1, xp.size(2)), dim=1)
+        recon_loss = self.recon_loss(torch.permute(xq, dims=(0, 2, 1)), xp)
+        kld = kl_divergence(Normal(mu, sigma), Normal(0.0, 1.0))
+        kld = torch.mean(kld) + torch.mean(
+            torch.abs(torch.mean(kld, dim=0) - torch.mean(kld.detach()))
         )
-        kld = -0.5 * torch.mean(1.0 + log_var - (mu * mu) - torch.exp(log_var))
         return recon_loss + (self.KLD_alpha * kld)
 
     def critic_loss(

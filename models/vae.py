@@ -18,57 +18,59 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import pytorch_lightning as pl
-from typing import Optional, Sequence
+from typing import Dict, Optional, Sequence
 
 from models.objective import SELFIESObjective
 from models.regularization import Regularization
 
+from MolOOD.molformers.models.components import causal_mask
+from MolOOD.molformers.models.BaseVAERange import BaseVAE
 
-class SELFIESVAEModule(pl.LightningModule):
+
+class SELFIESVAEModule(BaseVAE):
     """VAE model for molecule generation using SELFIES representation."""
 
     def __init__(
         self,
         in_dim: int,
         out_dim: int,
-        objective: str,
+        vocab: Dict[str, int],
+        padding_token: str = "[pad]",
         alpha: float = 0.0,
         KLD_alpha: float = 1e-5,
         regularization: str = "elbo",
-        z_dim: int = 256,
+        z_dim: int = 64,
         lr: int = 0.0001,
         clip: Optional[float] = None,
         beta1: float = 0.9,
         beta2: float = 0.999,
+        dropout_enc: float = 0.1,
         n_critic_per_generator: float = 1.0,
         **kwargs
     ):
         """
         in_dim: input dimensions to the VAE encoder.
         out_dim: output dimensions from the VAE decoder.
-        objective: objective function to optimize the VAE against.
+        vocab: vocabulary dictionary.
+        padding_token: padding token in the vocab dictionary. Default `[pad]`.
         alpha: source critic regularization weighting term. Default no
             source critic regularization.
         KLD_alpha: weighting of KL Divergence in ELBO loss calculation.
         regularization: method of regularization. One of [`None`, `fid`,
             `gan_loss`, `importance_weighting`, `log_importance_weighting`,
             `wasserstein`, `em`, `elbo`].
-        z_dim: number of latent space dimensions in the VAE. Default 256.
+        z_dim: number of latent space dimensions in the VAE. Default 64.
         lr: learning rate. Default 0.0002.
         clip: gradient clipping. Default no clipping.
         beta1: beta_1 parameter in Adam optimizer algorithm. Default 0.5.
         beta2: beta_2 parameter in Adam optimizer algorithm. Default 0.999.
+        dropout_enc: dropout parameters of the encoder. Default 0.1.
         n_critic_per_generator: number of times to optimize the critic
             versus the generator. Default 1.0.
         """
-        super().__init__()
-        self.save_hyperparameters()
+        super().__init__(vocab)
         self.hparams.alpha = min(max(alpha, 0.0), 1.0)
         self.automatic_optimization = False
-
-        self.encoder = VAEEncoder(in_dim, z_dim)
-        self.decoder = VAEDecoder(z_dim, out_dim)
 
         self.regularization = None
         if self.hparams.alpha > 0.0:
@@ -81,7 +83,10 @@ class SELFIESVAEModule(pl.LightningModule):
 
         self.objective = None
         if self.hparams.alpha < 1.0:
-            self.objective = SELFIESObjective(objective, x_dim=in_dim)
+            self.objective = SELFIESObjective(
+                self.hparams.vocab,
+                surrogate_ckpt="./MolOOD/checkpoints/regressor.ckpt"
+            )
 
         if self.hparams.n_critic_per_generator >= 1.0:
             self.f_G, self.f_D = round(self.hparams.n_critic_per_generator), 1
@@ -90,25 +95,31 @@ class SELFIESVAEModule(pl.LightningModule):
                 1.0 / self.hparams.n_critic_per_generator
             )
 
-    def forward(self, X: torch.Tensor) -> Sequence[torch.Tensor]:
+    def forward(self, tokens: torch.Tensor) -> Sequence[torch.Tensor]:
         """
         Forward propagation through the network.
         Input:
-            X: input molecule.
+            tokens: input batch of token representations of molecules.
         Returns:
-            output: generated synthesized molecule VAE(X).
-            mu: encoded mean.
-            log_var: encoded log of the variance.
+            recon_tokens: reconstructed batch of molecules as logits of each
+                character in the vocab dictionary.
+            mu: encoded mean in the latent space.
+            sigma: encoded standard deviation in the latent space.
         """
-        B, N, A = X.size()
-        z, mu, log_var = self.encoder(X.flatten(start_dim=1))
-        z = torch.unsqueeze(z, dim=0)
-        hidden = self.decoder.init_hidden(batch_size=B)
+        mu, sigma = self.encode(tokens)
+        z = mu + (sigma * torch.randn_like(sigma))
+        return self.decode(z, tokens), mu, sigma
 
-        output = torch.zeros_like(X).to(X)
-        for seq_idx in range(N):
-            output[:, seq_idx, :] = self.decoder(z, hidden)
-        return output, mu, log_var
+    def decode(self, z: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor:
+        """
+        TODO
+        """
+        z = self.dec_neck(z)
+        embed = self.decoder_token_embedding(tokens)
+
+        tgt_mask = causal_mask(embed.size(dim=1), embed.device, embed.dtype)
+        decoding = self.decoder(tgt=embed, memory=z, tgt_mask=tgt_mask)
+        return self.dec_tok_deproj(decoding)
 
     def training_step(
         self, batch: Sequence[torch.Tensor], batch_idx: int
@@ -121,21 +132,26 @@ class SELFIESVAEModule(pl.LightningModule):
         Returns:
             None.
         """
-        if self.regularization:
+        if self.regularization and self.hparams.regularization != "elbo":
             optimizer_vae, optimizer_D = self.optimizers()
         else:
             optimizer_vae, optimizer_D = self.optimizers(), None
 
         if batch_idx % self.f_G == 0:
             self.toggle_optimizer(optimizer_vae)
+            tokens, _ = batch
 
-            out, mu, log_var = self(batch)
+            logits, mu, sigma = self(tokens)
+            recon_tokens = torch.argmax(logits, dim=-1)
+
             loss_vae = 0.0
             if self.objective:
-                loss_vae += (self.hparams.alpha - 1.0) * self.objective(out)
+                loss_vae += (self.hparams.alpha - 1.0) * torch.mean(
+                    self.objective(recon_tokens)
+                )
             if self.regularization:
                 loss_vae += (self.hparams.alpha) * self.regularization(
-                    batch, out, mu, log_var
+                    tokens, logits, mu, sigma
                 )
             self.log("loss_vae", loss_vae, prog_bar=True, sync_dist=True)
             self.manual_backward(loss_vae, retain_graph=bool(optimizer_D))
@@ -151,7 +167,7 @@ class SELFIESVAEModule(pl.LightningModule):
 
         if optimizer_D and batch_idx % self.f_D == 0:
             self.toggle_optimizer(optimizer_D)
-            loss_D = self.critic_loss(batch, out.detach())
+            loss_D = self.critic_loss(batch, recon_tokens.detach())
             self.log("loss_D", loss_D, prog_bar=True, sync_dist=True)
             self.manual_backward(loss_D)
             if self.hparams.clip:
@@ -178,25 +194,22 @@ class SELFIESVAEModule(pl.LightningModule):
         Returns:
             None.
         """
-        _, N, _ = batch.size()
+        tokens, _ = batch
 
-        z = torch.randn(1, 1, self.hparams.z_dim)
-        hidden = self.decoder.init_hidden()
-        output = []
-        activation = nn.Softmax(dim=0)
-        for seq_idx in range(N):
-            line = torch.flatten(self.decoder(z, hidden)).detach()
-            output.append(
-                torch.argmax(activation(line), dim=0).data.cpu().tolist()
-            )
-        xq = torch.tensor(output).to(batch)
+        logits, mu, sigma = self(tokens)
+        recon_tokens = torch.argmax(logits, dim=-1)
 
+        val_obj = 0.0
         if self.objective:
-            self.log(
-                "val_obj", self.objective(xq), prog_bar=True, sync_dist=True
+            val_obj = torch.mean(self.objective(recon_tokens))
+        val_reg = 0.0
+        if self.regularization:
+            val_reg = self.regularization(
+                tokens, logits, mu, sigma
             )
-        else:
-            self.log("val_obj", 0.0, prog_bar=True, sync_dist=True)
+
+        self.log("val_obj", val_obj, prog_bar=True, sync_dist=True)
+        self.log("val_reg", val_reg, prog_bar=True, sync_dist=True)
 
     def configure_optimizers(self) -> Sequence[optim.Optimizer]:
         """

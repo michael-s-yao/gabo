@@ -7,15 +7,42 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import os
+import json
+import sys
+from pathlib import Path
 import torch
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
+import lightning.pytorch as pl
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
+from typing import Dict, Union
 
-from data.molecule import SELFIESDataModule
+sys.path.append("MolOOD")
 from models.vae import SELFIESVAEModule
 from experiment.selfies_params import Experiment
 from experiment.utility import seed_everything, plot_config
+from MolOOD.molformers.datamodules.logp_dataset import LogPDataModule
+
+
+def load_vocab(fn: Union[Path, str]) -> Dict[str, int]:
+    """
+    Loads the molecule vocabulary dict mapping molecular components to
+    numbers.
+    Input:
+        fn: File path to the vocab dictionary.
+    Returns:
+        A dictionary mapping molecular components to numbers.
+    """
+    with open(fn, "rb") as f:
+        vocab = json.load(f)
+
+    if "[start]" not in vocab:
+        raise ValueError("Vocab must contain `[start]` token.")
+    if "[stop]" not in vocab:
+        raise ValueError("Vocab must contain `[stop]` token.")
+    if "[pad]" not in vocab:
+        raise ValueError("Vocab must contain `[pad]` token.")
+
+    return vocab
 
 
 def main():
@@ -24,13 +51,18 @@ def main():
     plot_config()
     beta1, beta2 = exp.beta
 
-    datamodule = SELFIESDataModule(
-        batch_size=exp.batch_size, num_workers=exp.num_workers, seed=exp.seed
+    vocab = load_vocab(os.path.join(exp.datadir, "vocab.json"))
+
+    datamodule = LogPDataModule(
+        data_root=exp.datadir,
+        vocab=vocab,
+        batch_size=exp.batch_size,
+        num_workers=exp.num_workers
     )
     model = SELFIESVAEModule(
-        in_dim=(datamodule.max_molecule_length * len(datamodule.vocab.keys())),
+        in_dim=128,
         out_dim=len(datamodule.vocab.keys()),
-        objective=exp.objective,
+        vocab=vocab,
         alpha=exp.alpha,
         regularization=exp.regularization,
         lr=exp.lr,
@@ -43,7 +75,7 @@ def main():
     callbacks = [
         ModelCheckpoint(dirpath=exp.ckpt_dir, save_last=True)
     ]
-    meta = f"molecule_objective={exp.objective}_alpha={exp.alpha}"
+    meta = f"molecule_alpha={exp.alpha}"
     callbacks[0].CHECKPOINT_NAME_LAST = f"{meta}_{{epoch}}_last"
 
     logger = False
