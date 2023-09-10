@@ -20,7 +20,21 @@ from MolOOD.molformers.models.BaseRegressor import BaseRegressor
 
 
 class SELFIESObjective(nn.Module):
-    """Black-box objective function to optimize for molecule generation."""
+    """
+    Black-box objective function to optimize for molecule generation. In this
+    case, we focus on the task of optimizing the penalized water-octanol
+    partition coefficient (log P) over molecules.
+
+    Citation(s):
+        [1] Maus N, Jones HT, Moore JS, Kusner MJ, Bradshaw J, Gardner JR.
+            Local latent space optimization over structured inputs. arXiv
+            Preprint. (2023). https://doi.org/10.48550/arXiv.2201.11872
+        [2] Grosnit A, Tutunov R, Maraval AM, Griffiths RR, Cowen-Rivers AI,
+            Yang L, Zhu L, Lyu W, Chen Z, Wang J, Peters J, Bou-Ammar H. High-
+            dimensional Bayesian optimisation with variational autoencoders and
+            deep metric learning. arXiv Preprint. (2021). https://doi.org/10.48
+            550/arXiv.2106.03609
+    """
 
     def __init__(
         self,
