@@ -71,21 +71,25 @@ def validate_SELFIES_objective(
     objective = SELFIESObjective(vocab=vocab, surrogate_ckpt=surrogate_ckpt)
     objective = objective.to(device)
 
-    target = pd.read_csv(os.path.join(datadir, "logp_scores", "test_logp.csv"))
+    target = pd.read_csv(
+        os.path.join(datadir, "logp_scores", "test_logp.csv"), header=None
+    )
     target = np.squeeze(target.values, axis=-1)
 
-    all_preds = []
+    all_preds = np.array([])
     with torch.inference_mode():
         for batch in tqdm(
             datamodule.test_dataloader(),
             desc="SELFIES log P Objective Validation",
             leave=False
         ):
-            tokens, targets = batch
+            tokens, _ = batch
             tokens = tokens.to(device)
-            all_preds.append(objective(tokens).detach().cpu().numpy())
-    return np.sqrt(np.mean(np.square(np.hstack(np.array(all_preds)), target)))
+            all_preds = np.concatenate((
+                all_preds, objective(tokens).detach().cpu().numpy()
+            ))
+    return np.sqrt(np.mean(np.square(all_preds - target)))
 
 
 if __name__ == "__main__":
-    validate_SELFIES_objective()
+    print(f"RMSE: {validate_SELFIES_objective()}")

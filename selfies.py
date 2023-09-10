@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 import torch
 import lightning.pytorch as pl
+from lightning.pytorch.strategies.ddp import DDPStrategy
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from typing import Dict, Union
@@ -92,7 +93,7 @@ def main():
 
     strategy = "auto"
     if exp.find_unused_parameters and exp.alpha > 0.0:
-        strategy = "ddp_find_unused_parameters_true"
+        strategy = DDPStrategy(find_unused_parameters=True)
     trainer = pl.Trainer(
         max_epochs=exp.num_epochs,
         accelerator=exp.device,
