@@ -75,8 +75,6 @@ class SELFIESObjective(nn.Module):
                 key = key[len(prefix):] if key.startswith(prefix) else key
                 alt_state_dict[key] = item
             self.model.load_state_dict(alt_state_dict)
-        for param in self.model.parameters():
-            param.requires_grad = False
 
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         """
@@ -86,6 +84,7 @@ class SELFIESObjective(nn.Module):
         Returns:
             Value of the objective function for the input molecules.
         """
+        self.model.zero_grad()
         encoding, pad_mask = self.model.encode(tokens)
 
         # Average encoding over all tokens, excluding padding.
