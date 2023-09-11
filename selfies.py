@@ -94,7 +94,7 @@ def main():
         logger.log_hyperparams(exp.args)
 
     strategy = "auto"
-    if exp.find_unused_parameters and exp.alpha > 0.0:
+    if exp.find_unused_parameters and exp.alpha < 1.0:
         strategy = DDPStrategy(find_unused_parameters=True)
     trainer = pl.Trainer(
         max_epochs=exp.num_epochs,
