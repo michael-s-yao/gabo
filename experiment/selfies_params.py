@@ -91,9 +91,9 @@ class Experiment:
         )
         parser.add_argument(
             "--batch_size",
-            default=64,
+            default=128,
             type=int,
-            help="Batch size. Default 64."
+            help="Batch size. Default 128."
         )
         parser.add_argument(
             "--seed", default=42, type=int, help="Random seed. Default 42."

@@ -58,7 +58,7 @@ class SELFIESVAEModule(pl.LightningModule):
             `gan_loss`, `importance_weighting`, `log_importance_weighting`,
             `wasserstein`, `em`, `elbo`].
         z_dim: number of latent space dimensions in the VAE. Default 64.
-        lr: learning rate. Default 0.0002.
+        lr: learning rate. Default 0.0001.
         clip: gradient clipping. Default no clipping.
         beta1: beta_1 parameter in Adam optimizer algorithm. Default 0.5.
         beta2: beta_2 parameter in Adam optimizer algorithm. Default 0.999.
@@ -200,7 +200,11 @@ class SELFIESVAEModule(pl.LightningModule):
             val_reg = self.regularization(
                 batch, output, mu, sigma
             )
+        val_loss = ((self.hparams.alpha - 1.0) * val_obj) + (
+            self.hparams.alpha * val_reg
+        )
 
+        self.log("val_loss", val_loss, prog_bar=False, sync_dist=True)
         self.log("val_obj", val_obj, prog_bar=True, sync_dist=True)
         self.log("val_reg", val_reg, prog_bar=True, sync_dist=True)
         self.log(
@@ -272,7 +276,7 @@ class VAEEncoder(nn.Module):
         self,
         in_features: int,
         out_features: int,
-        layer_features: Optional[Sequence[int]] = [2_048, 1_024, 512]
+        layer_features: Optional[Sequence[int]] = [128, 128, 128]
     ):
         """
         Args:

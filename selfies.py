@@ -76,7 +76,7 @@ def main():
 
     callbacks = [
         ModelCheckpoint(dirpath=exp.ckpt_dir, save_last=True),
-        EarlyStopping(monitor="val_quality", mode="max", patience=20)
+        EarlyStopping(monitor="val_loss", mode="min", patience=20)
     ]
     meta = f"molecule_alpha={exp.alpha}"
     callbacks[0].CHECKPOINT_NAME_LAST = f"{meta}_{{epoch}}_last"
