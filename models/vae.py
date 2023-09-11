@@ -18,16 +18,14 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import lightning.pytorch as pl
 from typing import Dict, Optional, Sequence
 
 from models.objective import SELFIESObjective
 from models.regularization import Regularization
 
-from MolOOD.molformers.models.components import causal_mask
-from MolOOD.molformers.models.BaseVAERange import BaseVAE
 
-
-class SELFIESVAEModule(BaseVAE):
+class SELFIESVAEModule(pl.LightningModule):
     """VAE model for molecule generation using SELFIES representation."""
 
     def __init__(
@@ -68,7 +66,8 @@ class SELFIESVAEModule(BaseVAE):
         n_critic_per_generator: number of times to optimize the critic
             versus the generator. Default 1.0.
         """
-        super().__init__(vocab)
+        super().__init__()
+        self.save_hyperparameters()
         self.hparams.alpha = min(max(alpha, 0.0), 1.0)
         self.automatic_optimization = False
 
@@ -88,6 +87,9 @@ class SELFIESVAEModule(BaseVAE):
                 surrogate_ckpt="./MolOOD/checkpoints/regressor.ckpt"
             )
 
+        self.encoder = VAEEncoder(self.hparams.in_dim, self.hparams.z_dim)
+        self.decoder = VAEDecoder(self.hparams.z_dim, self.hparams.out_dim)
+
         if self.hparams.n_critic_per_generator >= 1.0:
             self.f_G, self.f_D = round(self.hparams.n_critic_per_generator), 1
         else:
@@ -101,25 +103,19 @@ class SELFIESVAEModule(BaseVAE):
         Input:
             tokens: input batch of token representations of molecules.
         Returns:
-            recon_tokens: reconstructed batch of molecules as logits of each
-                character in the vocab dictionary.
-            mu: encoded mean in the latent space.
-            sigma: encoded standard deviation in the latent space.
+            output: generated synthesized molecule VAE(X).
+            mu: encoded mean.
+            log_var: encoded log of the variance.
         """
-        mu, sigma = self.encode(tokens)
-        z = mu + (sigma * torch.randn_like(sigma))
-        return self.decode(z, tokens), mu, sigma
+        B, N, A = tokens.size()
+        z, mu, log_var = self.encoder(tokens.flatten(start_dim=1))
+        z = torch.unsqueeze(z, dim=0)
+        hidden = self.decoder.init_hidden(batch_size=B)
 
-    def decode(self, z: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor:
-        """
-        TODO
-        """
-        z = self.dec_neck(z)
-        embed = self.decoder_token_embedding(tokens)
-
-        tgt_mask = causal_mask(embed.size(dim=1), embed.device, embed.dtype)
-        decoding = self.decoder(tgt=embed, memory=z, tgt_mask=tgt_mask)
-        return self.dec_tok_deproj(decoding)
+        output = torch.zeros_like(tokens).to(tokens)
+        for seq_idx in range(N):
+            output[:, seq_idx, :] = self.decoder(z, hidden)
+        return output, mu, log_var
 
     def training_step(
         self, batch: Sequence[torch.Tensor], batch_idx: int
@@ -139,19 +135,17 @@ class SELFIESVAEModule(BaseVAE):
 
         if batch_idx % self.f_G == 0:
             self.toggle_optimizer(optimizer_vae)
-            tokens, _ = batch
 
-            logits, mu, sigma = self(tokens)
-            recon_tokens = torch.argmax(logits, dim=-1)
+            output, mu, log_var = self(batch)
 
             loss_vae = 0.0
             if self.objective:
                 loss_vae += (self.hparams.alpha - 1.0) * torch.mean(
-                    self.objective(recon_tokens)
+                    self.objective(torch.argmax(output, dim=-1))
                 )
             if self.regularization:
                 loss_vae += (self.hparams.alpha) * self.regularization(
-                    tokens, logits, mu, sigma
+                    batch, output, mu, log_var
                 )
             self.log("loss_vae", loss_vae, prog_bar=True, sync_dist=True)
             self.manual_backward(loss_vae, retain_graph=bool(optimizer_D))
@@ -167,7 +161,7 @@ class SELFIESVAEModule(BaseVAE):
 
         if optimizer_D and batch_idx % self.f_D == 0:
             self.toggle_optimizer(optimizer_D)
-            loss_D = self.critic_loss(batch, recon_tokens.detach())
+            loss_D = self.critic_loss(batch, output.detach())
             self.log("loss_D", loss_D, prog_bar=True, sync_dist=True)
             self.manual_backward(loss_D)
             if self.hparams.clip:
@@ -194,22 +188,43 @@ class SELFIESVAEModule(BaseVAE):
         Returns:
             None.
         """
-        tokens, _ = batch
-
-        logits, mu, sigma = self(tokens)
-        recon_tokens = torch.argmax(logits, dim=-1)
+        output, mu, sigma = self(batch)
 
         val_obj = 0.0
         if self.objective:
-            val_obj = torch.mean(self.objective(recon_tokens))
+            val_obj = torch.mean(
+                self.objective(torch.argmax(output, dim=-1))
+            )
         val_reg = 0.0
         if self.regularization:
             val_reg = self.regularization(
-                tokens, logits, mu, sigma
+                batch, output, mu, sigma
             )
 
         self.log("val_obj", val_obj, prog_bar=True, sync_dist=True)
         self.log("val_reg", val_reg, prog_bar=True, sync_dist=True)
+        self.log(
+            "val_quality",
+            self.compute_recon_quality(batch, output),
+            prog_bar=True,
+            sync_dist=True
+        )
+
+    def compute_recon_quality(
+        self, xp: torch.Tensor, xq: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Computes the molecule reconstruction accuracy.
+        Input:
+            xp: the target one-hot encoding representation of the batch of
+                molecules.
+            xq: the predicted probabilities of the reconstructed batch of
+                molecules.
+        Returns:
+            Molecule reconstruction accuracy.
+        """
+        compare = torch.eq(torch.argmax(xp, dim=-1), torch.argmax(xq, dim=-1))
+        return torch.sum(compare) / torch.numel(compare)
 
     def configure_optimizers(self) -> Sequence[optim.Optimizer]:
         """

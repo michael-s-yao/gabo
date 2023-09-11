@@ -56,9 +56,9 @@ class Experiment:
         )
         parser.add_argument(
             "--lr",
-            default=0.0002,
+            default=0.0001,
             type=float,
-            help="Learning rate. Default 0.0002."
+            help="Learning rate. Default 0.0001."
         )
         beta_help = "Beta parameters for Adam optimizer. "
         beta_help += "Default beta_1 = 0.9, beta_2 = 0.999."

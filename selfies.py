@@ -13,15 +13,15 @@ from pathlib import Path
 import torch
 import lightning.pytorch as pl
 from lightning.pytorch.strategies.ddp import DDPStrategy
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.loggers import WandbLogger
 from typing import Dict, Union
 
 sys.path.append("MolOOD")
+from data.molecule import SELFIESDataModule
 from models.vae import SELFIESVAEModule
 from experiment.selfies_params import Experiment
 from experiment.utility import seed_everything, plot_config
-from MolOOD.molformers.datamodules.logp_dataset import LogPDataModule
 
 
 def load_vocab(fn: Union[Path, str]) -> Dict[str, int]:
@@ -54,14 +54,15 @@ def main():
 
     vocab = load_vocab(os.path.join(exp.datadir, "vocab.json"))
 
-    datamodule = LogPDataModule(
-        data_root=exp.datadir,
+    datamodule = SELFIESDataModule(
         vocab=vocab,
+        root=exp.datadir,
         batch_size=exp.batch_size,
-        num_workers=exp.num_workers
+        num_workers=exp.num_workers,
+        seed=exp.seed
     )
     model = SELFIESVAEModule(
-        in_dim=128,
+        in_dim=(datamodule.max_molecule_length * len(datamodule.vocab.keys())),
         out_dim=len(datamodule.vocab.keys()),
         vocab=vocab,
         alpha=exp.alpha,
@@ -74,7 +75,8 @@ def main():
     )
 
     callbacks = [
-        ModelCheckpoint(dirpath=exp.ckpt_dir, save_last=True)
+        ModelCheckpoint(dirpath=exp.ckpt_dir, save_last=True),
+        EarlyStopping(monitor="val_quality", mode="max", patience=20)
     ]
     meta = f"molecule_alpha={exp.alpha}"
     callbacks[0].CHECKPOINT_NAME_LAST = f"{meta}_{{epoch}}_last"

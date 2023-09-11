@@ -10,17 +10,18 @@ Adapted from Haydn Jones @haydn-jones molformers repo.
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import os
-import json
+import gzip
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, Dataset
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 from typing import Dict, Optional, Sequence, Union
 
 
 class SELFIESDataModule(pl.LightningDataModule):
     def __init__(
         self,
+        vocab: Dict[str, int],
         root: Union[Path, str] = "./MolOOD/data",
         batch_size: int = 128,
         num_workers: int = os.cpu_count() // 2,
@@ -29,6 +30,7 @@ class SELFIESDataModule(pl.LightningDataModule):
     ):
         """
         Args:
+            vocab: vocabulary dictionary.
             root: directory path.
             batch_size: batch size. Default 128.
             num_workers: number of workers. Default half the CPU count.
@@ -36,11 +38,11 @@ class SELFIESDataModule(pl.LightningDataModule):
             seed: random seed. Default 42.
         """
         super().__init__()
+        self.vocab = vocab
         self.root = root
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.seed = seed
-        self.vocab = self.load_vocab()
 
         self.max_molecule_length = max_molecule_length
 
@@ -62,27 +64,6 @@ class SELFIESDataModule(pl.LightningDataModule):
             self.max_molecule_length,
             name="test"
         )
-
-    def load_vocab(self) -> Dict[str, int]:
-        """
-        Loads the molecule vocabulary dict mapping molecular components to
-        numbers.
-        Input:
-            None.
-        Returns:
-            A dictionary mapping molecular components to numbers.
-        """
-        with open(os.path.join(self.root, "vocab.json"), "rb") as f:
-            vocab = json.load(f)
-
-        if "[start]" not in vocab:
-            raise ValueError("Vocab must contain `[start]` token.")
-        if "[stop]" not in vocab:
-            raise ValueError("Vocab must contain `[stop]` token.")
-        if "[pad]" not in vocab:
-            raise ValueError("Vocab must contain `[pad]` token.")
-
-        return vocab
 
     def train_dataloader(self) -> DataLoader:
         """
@@ -154,7 +135,7 @@ class SELFIESDataset(Dataset):
         self.max_molecule_length = max_molecule_length
         self.name = name
         self.start, self.stop, self.pad = "[start]", "[stop]", "[pad]"
-        with open(self.datapath, "rb") as f:
+        with gzip.open(self.datapath, "rb") as f:
             self.data = [line.strip() for line in f.readlines()]
 
     def __len__(self) -> int:
@@ -196,12 +177,11 @@ class SELFIESDataset(Dataset):
             batch size, N is the maximum number of characters in the batch, and
             A is the size of the vocabulary dictionary.
         """
-        b, _ = batch.size()
         # Perform one-hot encoding.
         enc = torch.zeros(
-            (b, self.max_molecule_length, len(self.vocab.keys()))
+            (len(batch), self.max_molecule_length, len(self.vocab.keys()))
         )
-        for batch_idx in range(b):
+        for batch_idx in range(len(batch)):
             for seq_idx in range(self.max_molecule_length):
-                enc[batch_idx, seq_idx, batch[batch_idx, seq_idx]] = 1.0
+                enc[batch_idx, seq_idx, int(batch[batch_idx][seq_idx])] = 1.0
         return enc
