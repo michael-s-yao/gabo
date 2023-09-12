@@ -114,7 +114,8 @@ class SELFIESVAEModule(pl.LightningModule):
 
         output = torch.zeros_like(tokens).to(tokens)
         for seq_idx in range(N):
-            output[:, seq_idx, :] = self.decoder(z, hidden)
+            recon, hidden = self.decoder(z, hidden)
+            output[:, seq_idx, :] = torch.squeeze(recon, dim=0)
         return output, mu, log_var
 
     def training_step(
@@ -346,17 +347,18 @@ class VAEDecoder(nn.Module):
 
     def forward(
         self, z: torch.Tensor, h0: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    ) -> Sequence[torch.Tensor]:
         """
         Forward propagation through the VAE decoder.
         Input:
             z: input latent space vector to be decoded.
             h0: optional initial hidden state. Defaults to zeros.
         Returns:
-            Decoded vector.
+            output: decoded vector.
+            hn: final hidden state from the RNN.
         """
         output, hn = self.decoder(z, h0)
-        return self.linear(output)
+        return self.linear(output), hn
 
     def init_hidden(self, batch_size: int) -> torch.Tensor:
         """

@@ -48,7 +48,6 @@ class Regularization(nn.Module):
             self.clip()
         elif self.method == "elbo":
             self.KLD_alpha = KLD_alpha
-            self.recon_loss = nn.CrossEntropyLoss()
 
     def forward(
         self,
@@ -155,9 +154,9 @@ class Regularization(nn.Module):
         Returns:
             Calculated ELBO loss.
         """
-        xq = xq.reshape(-1, xq.shape[-1])
-        xp = xp.reshape(-1, xp.shape[-1])
-        recon_loss = self.recon_loss(F.softmax(xq, dim=-1), xp)
+        xp = torch.argmax(xp.view(-1, xp.size(-1)), dim=-1)
+        xq = xq.view(-1, xq.size(-1))
+        recon_loss = F.cross_entropy(xq, xp)
         kld = -0.5 * torch.mean(1.0 + log_var - (mu * mu) - torch.exp(log_var))
         return recon_loss + (self.KLD_alpha * kld)
 

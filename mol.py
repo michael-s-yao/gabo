@@ -1,5 +1,5 @@
 """
-Main driver program for SELFIES-related molecule generation training.
+Main driver program for molecule generation training.
 
 Author(s):
     Michael Yao
