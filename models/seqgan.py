@@ -32,7 +32,8 @@ class SeqGANGenerator(nn.Module):
         embedding_dim: int,
         hidden_dim: int,
         max_molecule_length: int = 109,
-        padding_token: Optional[str] = "[pad]"
+        padding_token: Optional[str] = "[pad]",
+        device: Optional[torch.device] = None
     ):
         """
         Args:
@@ -41,6 +42,7 @@ class SeqGANGenerator(nn.Module):
             hidden_dim: dimensions of the hidden vector in the RNN.
             max_molecule_length: maximum molecule length. Default 109.
             padding_token: optional padding token. Default `[pad]`.
+            device: device to move the model and data to. Default None.
         """
         super().__init__()
         self.vocab = vocab
@@ -49,6 +51,7 @@ class SeqGANGenerator(nn.Module):
         self.hidden_dim = hidden_dim
         self.max_molecule_length = max_molecule_length
         self.padding_token = padding_token
+        self.device = device
 
         self.embed = nn.Embedding(
             self.num_embeddings,
@@ -60,6 +63,10 @@ class SeqGANGenerator(nn.Module):
         )
         self.w = nn.Linear(self.hidden_dim, self.num_embeddings)
         self.init_params()
+        if self.device:
+            self.embed = self.embed.to(self.device)
+            self.rnn = self.rnn.to(self.device)
+            self.w = self.w.to(self.device)
 
     def init_hidden(self, batch_size: int) -> Sequence[torch.Tensor]:
         """
@@ -87,10 +94,7 @@ class SeqGANGenerator(nn.Module):
             param.data.uniform_(-eps, eps)
 
     def forward(
-        self,
-        X: torch.Tensor,
-        hidden: Optional[torch.Tensor] = None,
-        cell: Optional[torch.Tensor] = None,
+        self, X: torch.Tensor, hidden: torch.Tensor, cell: torch.Tensor
     ) -> Sequence[torch.Tensor]:
         """
         Forward pass through the generator network.
@@ -103,9 +107,7 @@ class SeqGANGenerator(nn.Module):
                 states.
         """
         batch_size, seq_length = X.size()
-        if hidden is None or cell is None:
-            hidden, cell = self.init_hidden(batch_size)
-        Y, (hidden, cell) = self.rnn(self.embed(X.long()), (hidden, cell))
+        Y, (hidden, cell) = self.rnn(self.embed(X.int()), (hidden, cell))
         return torch.squeeze(F.softmax(self.w(Y), dim=-1), dim=1), hidden, cell
 
     def sample(self, num_samples: int) -> torch.Tensor:
@@ -118,7 +120,14 @@ class SeqGANGenerator(nn.Module):
             num_samples x max_molecule_length.
         """
         samples = torch.zeros(num_samples, self.max_molecule_length)
-        tokens, hidden, cell = torch.zeros(num_samples, 1).long(), None, None
+        tokens = torch.zeros(num_samples, 1)
+        hidden, cell = self.init_hidden(num_samples)
+        if self.device:
+            self.embed = self.embed.to(self.device)
+            self.rnn = self.rnn.to(self.device)
+            self.w = self.w.to(self.device)
+            tokens = tokens.to(self.device)
+            hidden, cell = hidden.to(self.device), cell.to(self.device)
         for i in range(self.max_molecule_length):
             probs, hidden, cell = self(tokens, hidden, cell)
             tokens = torch.multinomial(probs, 1)
@@ -177,7 +186,8 @@ class SeqGANGeneratorModule(pl.LightningModule):
             embedding_dim=self.hparams.embedding_dim,
             hidden_dim=self.hparams.hidden_dim,
             max_molecule_length=self.hparams.max_molecule_length,
-            padding_token=self.hparams.padding_token
+            padding_token=self.hparams.padding_token,
+            device=self.device
         )
 
         self.regularization = None
@@ -195,6 +205,7 @@ class SeqGANGeneratorModule(pl.LightningModule):
             self.objective = SELFIESObjective(
                 self.hparams.vocab,
                 surrogate_ckpt="./MolOOD/checkpoints/regressor.ckpt",
+                device=self.device
             )
 
         if self.hparams.n_critic_per_generator >= 1.0:
@@ -232,7 +243,7 @@ class SeqGANGeneratorModule(pl.LightningModule):
         else:
             optimizer_G, optimizer_D = self.optimizers(), None
 
-        xq = self(batch_size).long()
+        xq = self(batch_size).int()
 
         if batch_idx % self.f_G == 0:
             self.toggle_optimizer(optimizer_G)
@@ -283,7 +294,21 @@ class SeqGANGeneratorModule(pl.LightningModule):
         Returns:
             None.
         """
-        pass  # TODO
+        xp, xq = one_hot_encodings_to_tokens(batch), self(batch.size(0)).int()
+
+        val_obj = 0.0
+        if self.objective:
+            val_obj = torch.mean(self.objective(xq))
+        val_reg = 0.0
+        if self.regularization:
+            val_reg = self.regularization(xp, xq)
+        val_loss = ((self.hparams.alpha - 1.0) * val_obj) + (
+            self.hparams.alpha * val_reg
+        )
+
+        self.log("val_loss", val_loss, prog_bar=False, sync_dist=True)
+        self.log("val_obj", val_obj, prog_bar=True, sync_dist=True)
+        self.log("val_reg", val_reg, prog_bar=True, sync_dist=True)
 
     def test_step(self, batch: torch.Tensor, batch_idx: int) -> None:
         """

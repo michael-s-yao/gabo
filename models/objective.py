@@ -14,7 +14,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torchmetrics.functional.image as F
-from typing import Dict, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 from MolOOD.molformers.models.BaseRegressor import BaseRegressor
 
@@ -44,6 +44,7 @@ class SELFIESObjective(nn.Module):
         encoder_nhead: int = 8,
         encoder_dim_ff: int = 1024,
         encoder_num_layers: int = 6,
+        device: Optional[torch.device] = None
     ):
         """
         Args:
@@ -54,10 +55,12 @@ class SELFIESObjective(nn.Module):
             encoder_nhead: number of heads of the encoder. Default 8.
             encoder_dim_ff: feed-forward encoder dimension. Default 1024.
             encoder_num_layers: number of encoder layers. Default 6.
+            device: device to move the model and data to. Default None.
         """
         super().__init__()
         self.vocab = vocab
         self.start, self.stop = "[start]", "[stop]"
+        self.device = device
         self.model = BaseRegressor(
             self.vocab,
             d_enc=encoder_dim,
@@ -90,6 +93,8 @@ class SELFIESObjective(nn.Module):
         stop = self.vocab[self.stop] * torch.ones((tokens.size(0), 1))
         tokens = torch.cat((start.to(tokens), tokens, stop.to(tokens)), dim=-1)
         self.model.zero_grad()
+        if self.device:
+            self.model = self.model.to(self.device)
         encoding, pad_mask = self.model.encode(tokens)
 
         # Average encoding over all tokens, excluding padding.
