@@ -1,5 +1,5 @@
 """
-Model evaluation script and helper functions.
+MNIST model evaluation script and helper functions.
 
 Author(s):
     Michael Yao

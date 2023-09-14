@@ -43,7 +43,7 @@ class SELFIESObjective(nn.Module):
         encoder_dim: int = 256,
         encoder_nhead: int = 8,
         encoder_dim_ff: int = 1024,
-        encoder_num_layers: int = 6
+        encoder_num_layers: int = 6,
     ):
         """
         Args:

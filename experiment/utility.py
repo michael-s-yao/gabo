@@ -98,3 +98,22 @@ def cleanup() -> None:
         None.
     """
     dist.destroy_process_group()
+
+
+def get_device(device: str = "auto") -> torch.device:
+    """
+    Returns specified device.
+    Input:
+        device: device. Default auto.
+    Returns:
+        The specified device.
+    """
+    if device.lower() != "auto":
+        return torch.device(device)
+
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")

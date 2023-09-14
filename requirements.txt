@@ -70,6 +70,7 @@ python-multipart==0.0.6
 pytorch-lightning==2.0.7
 pytz==2023.3.post1
 PyYAML==6.0.1
+rdkit==2023.3.3
 readchar==4.0.5
 requests==2.31.0
 requests-oauthlib==1.3.1

@@ -22,6 +22,12 @@ class Experiment:
         )
 
         parser.add_argument(
+            "--model",
+            required=True,
+            type=str,
+            help="Model for molecule generation. One of [`SeqGAN`, `VAE`]."
+        )
+        parser.add_argument(
             "--alpha",
             default=0.5,
             type=float,
@@ -29,7 +35,7 @@ class Experiment:
         )
         parser.add_argument(
             "--regularization",
-            default="elbo",
+            default="gan_loss",
             type=str,
             choices=(
                 "gan_loss",

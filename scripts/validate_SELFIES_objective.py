@@ -20,27 +20,9 @@ from typing import Union
 sys.path.append(".")
 sys.path.append("MolOOD")
 from models.objective import SELFIESObjective
-from selfies import load_vocab
+from mol import load_vocab
 from MolOOD.molformers.datamodules.logp_dataset import LogPDataModule
-
-
-def get_device(device: str = "auto") -> torch.device:
-    """
-    Returns specified device.
-    Input:
-        device: device. Default auto.
-    Returns:
-        The specified device.
-    """
-    if device.lower() != "auto":
-        return torch.device(device)
-
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        return torch.device("mps")
-    else:
-        return torch.device("cpu")
+from experiment.utility import get_device
 
 
 def validate_SELFIES_objective(

@@ -28,7 +28,7 @@ class SELFIESDataModule(pl.LightningDataModule):
         root: Union[Path, str] = "./MolOOD/data",
         batch_size: int = 128,
         num_workers: int = os.cpu_count() // 2,
-        max_molecule_length: int = -1,
+        max_molecule_length: int = 109,
         seed: int = 42,
     ):
         """
@@ -38,7 +38,8 @@ class SELFIESDataModule(pl.LightningDataModule):
             batch_size: batch size. Default 128.
             num_workers: number of workers. Default half the CPU count.
             max_molecule_length: maximum molecule length. Default maximum
-                molecule length in training, validation, and test datasets.
+                molecule length in training, validation, and test datasets,
+                which is 109.
             seed: random seed. Default 42.
         """
         super().__init__()

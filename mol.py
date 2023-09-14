@@ -19,6 +19,7 @@ from typing import Dict, Union
 
 sys.path.append("MolOOD")
 from data.molecule import SELFIESDataModule
+from models.seqgan import SeqGANGeneratorModule
 from models.vae import SELFIESVAEModule
 from experiment.selfies_params import Experiment
 from experiment.utility import seed_everything, plot_config
@@ -61,21 +62,43 @@ def main():
         num_workers=exp.num_workers,
         seed=exp.seed
     )
-    model = SELFIESVAEModule(
-        in_dim=(datamodule.max_molecule_length * len(datamodule.vocab.keys())),
-        out_dim=len(datamodule.vocab.keys()),
-        vocab=vocab,
-        alpha=exp.alpha,
-        regularization=exp.regularization,
-        lr=exp.lr,
-        clip=exp.clip,
-        beta1=beta1,
-        beta2=beta2,
-        n_critic_per_generator=exp.n_critic_per_generator,
-    )
+    if exp.model.lower() == "seqgan":
+        model = SeqGANGeneratorModule(
+            vocab,
+            max_molecule_length=datamodule.max_molecule_length,
+            alpha=exp.alpha,
+            regularization=exp.regularization,
+            lr=exp.lr,
+            clip=exp.clip,
+            beta1=beta1,
+            beta2=beta2,
+            n_critic_per_generator=exp.n_critic_per_generator
+        )
+    elif exp.model.lower() == "vae":
+        model = SELFIESVAEModule(
+            in_dim=(
+                datamodule.max_molecule_length * len(datamodule.vocab.keys())
+            ),
+            out_dim=len(datamodule.vocab.keys()),
+            vocab=vocab,
+            alpha=exp.alpha,
+            regularization=exp.regularization,
+            lr=exp.lr,
+            clip=exp.clip,
+            beta1=beta1,
+            beta2=beta2,
+            n_critic_per_generator=exp.n_critic_per_generator
+        )
+    else:
+        raise NotImplementedError(f"Model type {exp.model} not implemented.")
 
     callbacks = [
-        ModelCheckpoint(dirpath=exp.ckpt_dir, save_last=True),
+        ModelCheckpoint(
+            dirpath=exp.ckpt_dir,
+            monitor="val_loss",
+            mode="min",
+            save_last=True
+        ),
         EarlyStopping(monitor="val_loss", mode="min", patience=20)
     ]
     meta = f"molecule_alpha={exp.alpha}"
@@ -114,11 +137,21 @@ def main():
         )
     if exp.mode in ("both", "test"):
         try:
-            model = SELFIESVAEModule.load_from_checkpoint(exp.resume_from)
+            if exp.model.lower() == "seqgan":
+                model = SeqGANGeneratorModule.load_from_checkpoint(
+                    exp.resume_from
+                )
+            elif exp.model.lower() == "vae":
+                model = SELFIESVAEModule.load_from_checkpoint(exp.resume_from)
         except RuntimeError:
-            model = SELFIESVAEModule.load_from_checkpoint(
-                exp.resume_from, map_location=torch.device("cpu")
-            )
+            if exp.model.lower() == "seqgan":
+                model = SeqGANGeneratorModule.load_from_checkpoint(
+                    exp.resume_from, map_location=torch.device("cpu")
+                )
+            elif exp.model.lower() == "vae":
+                model = SELFIESVAEModule.load_from_checkpoint(
+                    exp.resume_from, map_location=torch.device("cpu")
+                )
         trainer.test(model, datamodule=datamodule)
 
 
