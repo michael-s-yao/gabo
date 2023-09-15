@@ -34,6 +34,12 @@ class Experiment:
             help="Relative regularization weighting. Default 0.5."
         )
         parser.add_argument(
+            "--KLD_alpha",
+            default=1e-5,
+            type=float,
+            help="KL divergence weighting in ELBO loss. Default 1e-5."
+        )
+        parser.add_argument(
             "--regularization",
             default="gan_loss",
             type=str,

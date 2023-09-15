@@ -82,6 +82,7 @@ def main():
             out_dim=len(datamodule.vocab.keys()),
             vocab=vocab,
             alpha=exp.alpha,
+            KLD_alpha=exp.KLD_alpha,
             regularization=exp.regularization,
             lr=exp.lr,
             clip=exp.clip,
@@ -117,7 +118,7 @@ def main():
         logger.log_hyperparams(exp.args)
 
     strategy = "auto"
-    if exp.find_unused_parameters and exp.alpha < 1.0:
+    if exp.find_unused_parameters:
         strategy = DDPStrategy(find_unused_parameters=True)
     trainer = pl.Trainer(
         max_epochs=exp.num_epochs,
@@ -156,4 +157,5 @@ def main():
 
 
 if __name__ == "__main__":
+    torch.set_float32_matmul_precision("medium")
     main()
