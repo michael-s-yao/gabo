@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
 
-from models.critic import Critic, WeightClipper
+from models.critic import Critic, SeqGANCritic, WeightClipper
 
 
 class Regularization(nn.Module):
@@ -22,7 +22,9 @@ class Regularization(nn.Module):
         method: Optional[str] = None,
         x_dim: Optional[Tuple[int]] = (1, 28, 28),
         c: Optional[float] = 0.01,
-        KLD_alpha: Optional[float] = 1e-5
+        KLD_alpha: Optional[float] = 1e-5,
+        use_rnn: bool = False,
+        **kwargs
     ):
         """
         Args:
@@ -35,15 +37,37 @@ class Regularization(nn.Module):
                 critic for `wasserstein`/`em` regularization algorithms.
             KLD_alpha: weighting of KL Divergence loss term, only applicable
                 if `method` is `elbo`. Default 1e-5.
+            use_rnn: whether to use an RNN architecture for the source critic.
         """
         super().__init__()
         self.method = method.lower() if method else method
+        self.use_rnn = use_rnn
         if self.method in [
             "gan_loss", "importance_weighting", "log_importance_weighting"
         ]:
-            self.D = Critic(x_dim=x_dim, use_sigmoid=True)
+            if self.use_rnn:
+                self.D = SeqGANCritic(
+                    vocab=kwargs["vocab"],
+                    embedding_dim=kwargs.get("embedding_dim", 64),
+                    hidden_dim=kwargs.get("hidden_dim", 64),
+                    max_molecule_length=kwargs.get("max_molecule_length", 109),
+                    dropout=kwargs.get("dropout", 0.1),
+                    use_sigmoid=True
+                )
+            else:
+                self.D = Critic(x_dim=x_dim, use_sigmoid=True)
         elif self.method in ["wasserstein", "em"]:
-            self.f = Critic(x_dim=x_dim, use_sigmoid=False)
+            if self.use_rnn:
+                self.f = SeqGANCritic(
+                    vocab=kwargs["vocab"],
+                    embedding_dim=kwargs.get("embedding_dim", 64),
+                    hidden_dim=kwargs.get("hidden_dim", 64),
+                    max_molecule_length=kwargs.get("max_molecule_length", 109),
+                    dropout=kwargs.get("dropout", 0.1),
+                    use_sigmoid=False
+                )
+            else:
+                self.f = Critic(x_dim=x_dim, use_sigmoid=False)
             self.clipper = WeightClipper(c=c)
             self.clip()
         elif self.method == "elbo":

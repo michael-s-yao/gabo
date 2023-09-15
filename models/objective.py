@@ -14,7 +14,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torchmetrics.functional.image as F
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Tuple, Union
 
 from MolOOD.molformers.models.BaseRegressor import BaseRegressor
 

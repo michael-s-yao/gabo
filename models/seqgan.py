@@ -187,8 +187,7 @@ class SeqGANGeneratorModule(pl.LightningModule):
         self.regularization = None
         if self.hparams.alpha > 0.0:
             self.regularization = Regularization(
-                method=regularization,
-                x_dim=self.hparams.x_dim
+                method=regularization, vocab=self.hparams.vocab, use_rnn=True
             )
             self.critic_loss = self.regularization.critic_loss
         else:
@@ -239,7 +238,7 @@ class SeqGANGeneratorModule(pl.LightningModule):
         else:
             optimizer_G, optimizer_D = self.optimizers(), None
 
-        z0 = torch.zeros(batch_size, 1, dtype=torch.int, device=batch.device)
+        z0 = torch.zeros(batch_size, 1, dtype=torch.int64, device=batch.device)
         h0, c0 = self.generator.init_hidden(
             batch_size, device=batch.device
         )
@@ -294,9 +293,9 @@ class SeqGANGeneratorModule(pl.LightningModule):
         Returns:
             None.
         """
-        batch_size, _, _= batch.size()
+        batch_size, _, _ = batch.size()
 
-        z0 = torch.zeros(batch_size, 1, dtype=torch.int, device=batch.device)
+        z0 = torch.zeros(batch_size, 1, dtype=torch.int64, device=batch.device)
         h0, c0 = self.generator.init_hidden(
             batch_size, device=batch.device
         )
