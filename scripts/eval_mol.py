@@ -192,7 +192,6 @@ def eval_molecules(
                 [[vocab[tok] for tok in sf.split_selfies(mol)]],
                 dtype=torch.int64
             )
-            print(mol)
             vals.append(objective(mol).item())
     return vals
 
