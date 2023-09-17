@@ -7,14 +7,17 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import argparse
+import matplotlib.pyplot as plt
 import numpy as np
+import Levenshtein
+from rdkit import Chem, DataStructs
+from rdkit.Chem.Fingerprints import FingerprintMols
 import selfies as sf
 import sys
 from pathlib import Path
-import matplotlib.pyplot as plt
+from tqdm import tqdm
 import torch
 import torch.nn.functional as F
-from tqdm import tqdm
 from typing import Any, Dict, Optional, Sequence, Union
 
 sys.path.append(".")
@@ -44,10 +47,34 @@ def build_args() -> argparse.Namespace:
         help="Number of molecules to evaluate. Default 256."
     )
     parser.add_argument(
+        "--disable_plot",
+        action="store_true",
+        help="If True, no plots are generated."
+    )
+    parser.add_argument(
         "--savepath",
         default=None,
         type=str,
         help="File path to save the plot. Default not saved."
+    )
+    parser.add_argument(
+        "--metric",
+        type=str,
+        choices=(
+            "tanimoto",
+            "levenshtein",
+            "diversity",
+            "learned_objective",
+            "oracle"
+        ),
+        default="tanimoto",
+        help="Metric for molecule similarity. Default Tanimoto similarity."
+    )
+    parser.add_argument(
+        "--percentile",
+        type=float,
+        default=0.95,
+        help="Perentile to report for oracle and learned_objective metrics."
     )
     parser.add_argument(
         "--seed", default=42, type=int, help="Random seed. Default 42."
@@ -61,7 +88,8 @@ def sample(
     model: Optional[Union[Path, str]] = None,
     max_molecule_length: int = 109,
     device: str = "cpu",
-    use_encoder: bool = False
+    use_encoder: bool = False,
+    use_train: bool = False,
 ) -> Sequence[Any]:
     """
     Generates n molecules according to a model generator network.
@@ -75,6 +103,8 @@ def sample(
         device: device. Default CPU.
         use_encoder: whether to use the encoder to generate sampled latent
             space points from encoding valid molecules from the test dataset.
+        use_train: whether to sample molecules according to the training
+            dataset instead of the test dataset.
     Returns:
         molecules: a generated batch of molecules using SELFIES representation.
         kld: KL divergence between the encoded latent space distribution and
@@ -90,9 +120,14 @@ def sample(
             max_molecule_length=max_molecule_length
         )
         if not model:
-            molecules = one_hot_encodings_to_selfies(
-                next(iter(datamodule.test_dataloader())), vocab=vocab
-            )
+            if use_train:
+                molecules = one_hot_encodings_to_selfies(
+                    next(iter(datamodule.train_dataloader())), vocab=vocab
+                )
+            else:
+                molecules = one_hot_encodings_to_selfies(
+                    next(iter(datamodule.test_dataloader())), vocab=vocab
+                )
             return molecules, None
 
     vae = SELFIESVAEModule.load_from_checkpoint(
@@ -101,7 +136,10 @@ def sample(
     vae.eval()
     molecules = []
     if use_encoder:
-        tokens = next(iter(datamodule.test_dataloader()))
+        if use_train:
+            tokens = next(iter(datamodule.train_dataloader()))
+        else:
+            tokens = next(iter(datamodule.test_dataloader()))
         z, mu, log_var = vae.encoder(tokens.flatten(start_dim=1))
         z = torch.unsqueeze(z, dim=1)
         kld = -0.5 * torch.mean(1.0 + log_var - (mu * mu) - torch.exp(log_var))
@@ -150,7 +188,11 @@ def eval_molecules(
         if use_oracle:
             vals.append(objective(mol))
         else:
-            mol = torch.tensor([[vocab[tok] for tok in sf.split_selfies(mol)]])
+            mol = torch.tensor(
+                [[vocab[tok] for tok in sf.split_selfies(mol)]],
+                dtype=torch.int64
+            )
+            print(mol)
             vals.append(objective(mol).item())
     return vals
 
@@ -185,46 +227,145 @@ def plot_histograms(
         plt.savefig(savepath, transparent=True, bbox_inches="tight", dpi=600)
 
 
+def selfies_to_fingerprints(
+    selfies: Sequence[int]
+) -> Sequence[DataStructs.cDataStructs.ExplicitBitVect]:
+    """
+    Converts a list of SELFIES molecule representations to a list of explicit
+    bit vectors.
+    Input:
+        selfies: a list of SELFIES molecule representations.
+    Returns:
+        A corresponding list of explicit bit vector representations.
+    """
+    return [
+        FingerprintMols.FingerprintMol(
+            Chem.MolFromSmiles(sf.decoder(mol)),
+            minPath=1,
+            maxPath=7,
+            fpSize=2048,
+            bitsPerHash=2,
+            useHs=True,
+            tgtDensity=0.0,
+            minSize=128
+        )
+        for mol in selfies
+    ]
+
+
 def main():
     args = build_args()
     seed_everything(seed=args.seed)
     plot_config(fontsize=16)
 
-    xp, kld_xp = sample(args.num_molecules, model=None)
+    xp, _ = sample(args.num_molecules, model=None, use_train=True)
     network_xp = eval_molecules(xp, use_oracle=False)
     oracle_xp = eval_molecules(xp, use_oracle=True)
-    diff_xp = [obs - exp for obs, exp in zip(network_xp, oracle_xp)]
+    diff_xp = [x - y for x, y in zip(network_xp, oracle_xp)]
 
-    xq_constrained, kld_xq_constrained = sample(
-        args.num_molecules, model=args.model, use_encoder=True
-    )
-    network_xq_constrained = eval_molecules(xq_constrained, use_oracle=False)
-    oracle_xq_constrained = eval_molecules(xq_constrained, use_oracle=True)
-    diff_xq_constrained = [
-        obs - exp for obs, exp in zip(
-            network_xq_constrained, oracle_xq_constrained
+    xq_src, _ = sample(args.num_molecules, model=None, use_train=False)
+    network_xq_src = eval_molecules(xq_src, use_oracle=False)
+    oracle_xq_src = eval_molecules(xq_src, use_oracle=True)
+    diff_xq_src = [x - y for x, y in zip(network_xq_src, oracle_xq_src)]
+
+    xq_gen, _ = sample(args.num_molecules, model=args.model, use_encoder=False)
+    network_xq_gen = eval_molecules(xq_gen, use_oracle=False)
+    oracle_xq_gen = eval_molecules(xq_gen, use_oracle=True)
+    diff_xq_gen = [x - y for x, y in zip(network_xq_gen, oracle_xq_gen)]
+
+    vocab = load_vocab("./data/molecules/vocab.json")
+    xp_vs_xq_src, xp_vs_xq_gen, xq_src_vs_xq_gen = 0.0, 0.0, 0.0
+
+    if args.metric.lower() == "diversity":
+        print("Metric: Diversity (Higher is More Diverse)")
+        print("N =", args.num_molecules)
+        print("Training Distribution:", len(set(xp)) / args.num_molecules)
+        print("Test Distribution:", len(set(xq_src)) / args.num_molecules)
+        print("Generated Distribution:", len(set(xq_gen)) / args.num_molecules)
+    elif args.metric.lower() == "learned_objective":
+        print("Metric: Learned Objective (Higher is Better)")
+        print("N =", args.num_molecules)
+        idx = round(min(max(args.percentile, 0.0), 1.0) * args.num_molecules)
+        xp_idx = np.argsort(np.array(network_xp))[idx]
+        print(
+            "Training Distribution:",
+            f"{network_xp[xp_idx]} (Using Oracle: {oracle_xp[xp_idx]})"
         )
-    ]
-
-    xq_unconstrained, kld_xq_unconstrained = sample(
-        args.num_molecules, model=args.model, use_encoder=False
-    )
-    network_xq_unconstrained = eval_molecules(
-        xq_unconstrained, use_oracle=False
-    )
-    oracle_xq_unconstrained = eval_molecules(xq_unconstrained, use_oracle=True)
-    diff_xq_unconstrained = [
-        obs - exp for obs, exp in zip(
-            network_xq_unconstrained, oracle_xq_unconstrained
+        xq_src_idx = np.argsort(np.array(network_xq_src))[idx]
+        print(
+            "Test Distribution:",
+            f"{network_xq_src[xq_src_idx]}",
+            f"(Using Oracle: {oracle_xq_src[xq_src_idx]})"
         )
-    ]
+        xq_gen_idx = np.argsort(np.array(network_xq_gen))[idx]
+        print(
+            "Generated Distribution:",
+            f"{network_xq_gen[xq_gen_idx]}",
+            f"(Using Oracle: {oracle_xq_gen[xq_gen_idx]})"
+        )
+    elif args.metric.lower() == "oracle":
+        print("Metric: Oracle (Higher is Better)")
+        print("N =", args.num_molecules)
+        idx = round(min(max(args.percentile, 0.0), 1.0) * args.num_molecules)
+        xp_idx = np.argsort(np.array(oracle_xp))[idx]
+        print(f"Training Distribution: {oracle_xp[xp_idx]}")
+        xq_src_idx = np.argsort(np.array(oracle_xq_src))[idx]
+        print(f"Test Distribution: {oracle_xq_src[xq_src_idx]}")
+        xq_gen_idx = np.argsort(np.array(network_xq_gen))[idx]
+        print(f"Generated Distribution: {oracle_xq_gen[xq_gen_idx]}")
+    else:
+        if args.metric.lower() == "tanimoto":
+            xp = selfies_to_fingerprints(xp)
+            xq_src = selfies_to_fingerprints(xq_src)
+            xq_gen = selfies_to_fingerprints(xq_gen)
+        for i in range(args.num_molecules):
+            if args.metric.lower() == "tanimoto":
+                xp_vs_xq_src += 0.5 * max(
+                    DataStructs.BulkTanimotoSimilarity(xp[i], xq_src)
+                )
+                xp_vs_xq_src += 0.5 * max(
+                    DataStructs.BulkTanimotoSimilarity(xq_src[i], xp)
+                )
+                xp_vs_xq_gen += 0.5 * max(
+                    DataStructs.BulkTanimotoSimilarity(xp[i], xq_gen)
+                )
+                xp_vs_xq_gen += 0.5 * max(
+                    DataStructs.BulkTanimotoSimilarity(xq_gen[i], xp)
+                )
+                xq_src_vs_xq_gen += 0.5 * max(
+                    DataStructs.BulkTanimotoSimilarity(xq_src[i], xq_gen)
+                )
+                xq_src_vs_xq_gen += 0.5 * max(
+                    DataStructs.BulkTanimotoSimilarity(xq_gen[i], xq_src)
+                )
+            elif args.metric.lower() == "levenshtein":
+                x = [str(vocab[tok]) for tok in sf.split_selfies(xp[i])]
+                x_src = [
+                    str(vocab[tok]) for tok in sf.split_selfies(xq_src[i])
+                ]
+                x_gen = [
+                    str(vocab[tok]) for tok in sf.split_selfies(xq_gen[i])
+                ]
+                xp_vs_xq_src += Levenshtein.ratio(x, x_src)
+                xp_vs_xq_gen += Levenshtein.ratio(x, x_gen)
+                xq_src_vs_xq_gen += Levenshtein.ratio(x_src, x_gen)
+        xp_vs_xq_src /= args.num_molecules
+        xp_vs_xq_gen /= args.num_molecules
+        xq_src_vs_xq_gen /= args.num_molecules
 
-    values = {
-        "In-Distribution Molecules": diff_xp,
-        "Constrained Generated Molecules": diff_xq_constrained,
-        "Unconstrained Generated Molecules": diff_xq_unconstrained
-    }
-    plot_histograms(values, xrange=[-40, 120], savepath=args.savepath)
+        print("Metric:", args.metric.title(), "(Higher is More Similar)")
+        print("N =", args.num_molecules)
+        print("Training vs. Test Distribution:", xp_vs_xq_src)
+        print("Training vs. Generated Distribution:", xp_vs_xq_gen)
+        print("Test vs. Generated Distribution:", xq_src_vs_xq_gen)
+
+    if not args.disable_plot:
+        values = {
+            "Training Distribution Molecules": diff_xp,
+            "Test Distribution Molecules": diff_xq_src,
+            "Generated Molecules": diff_xq_gen
+        }
+        plot_histograms(values, xrange=[-40, 120], savepath=args.savepath)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 import lightning.pytorch as pl
 from lightning.pytorch.strategies.ddp import DDPStrategy
-from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from typing import Dict, Union
 
@@ -93,16 +93,16 @@ def main():
     else:
         raise NotImplementedError(f"Model type {exp.model} not implemented.")
 
+    meta = f"molecule_alpha={exp.alpha}"
     callbacks = [
         ModelCheckpoint(
             dirpath=exp.ckpt_dir,
             monitor="val_loss",
             mode="min",
+            filename=f"{meta}_{{epoch}}",
             save_last=True
-        ),
-        EarlyStopping(monitor="val_loss", mode="min", patience=20)
+        )
     ]
-    meta = f"molecule_alpha={exp.alpha}"
     callbacks[0].CHECKPOINT_NAME_LAST = f"{meta}_{{epoch}}_last"
 
     logger = False
