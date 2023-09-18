@@ -119,3 +119,4 @@ data/__pycache__/
 data/molecules/train_selfie
 data/molecules/val_selfie
 data/molecules/test_selfie
+data/warfarin/*.xls
