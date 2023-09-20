@@ -2,3 +2,6 @@
 	path = MolOOD
 	url = https://github.com/Yimeng-Zeng/Mol-OOD.git
 	branch = surrogate
+[submodule "fcd_torch"]
+	path = fcd_torch
+	url = https://github.com/insilicomedicine/fcd_torch.git

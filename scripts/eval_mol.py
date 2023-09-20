@@ -184,7 +184,9 @@ def eval_molecules(
         )
         objective.eval()
     vals = []
-    for mol in molecules:
+    suffix = "Oracle" if use_oracle else "Learned Objective"
+    desc = f"Evaluating Molecules Using {suffix}"
+    for mol in tqdm(molecules, desc=desc, leave=False):
         if use_oracle:
             vals.append(objective(mol))
         else:
@@ -252,6 +254,70 @@ def selfies_to_fingerprints(
     ]
 
 
+def source_all_metrics(
+    partition: str = "train",
+    top_k: int = -1,
+    vocab_path: Union[Path, str] = "./data/molecules/vocab.json",
+    max_molecule_length: int = 109,
+    percentile: float = 0.95
+) -> None:
+    """
+    Evaluates the `diversity`, `learned_objective`, and `oracle` metrics on
+    the entirety of a source dataset partition.
+    Input:
+        partition: the source dataset partition to evaluate the metrics on.
+            One of [`train`, `test`]. Default `train`.
+        top_k: if specified, will restrict attention to only the top_k
+            performing molecules.
+        vocab_path: file path to vocab dict.
+        max_molecule_length: maximum molecule length. Default 109.
+        percentile: perentile to report for `oracle` and `learned_objective`
+            metrics.
+    Returns:
+        None. All metrics are printed to `stdout`.
+    """
+    vocab = load_vocab(vocab_path)
+    datamodule = SELFIESDataModule(
+        vocab=vocab,
+        batch_size=4,
+        max_molecule_length=max_molecule_length
+    )
+    if partition.lower() == "train":
+        dataset = iter(datamodule.train_dataloader())
+    elif partition.lower() == "test":
+        dataset = iter(datamodule.test_dataloader())
+    else:
+        raise ValueError(f"Unrecognized source data partition {partition}.")
+
+    molecules = [0] * len(dataset)
+    for i, mol in enumerate(
+        tqdm(dataset, desc="Encoding Dataset", leave=False)
+    ):
+        molecules[i] = one_hot_encodings_to_selfies(mol, vocab=vocab)[0]
+
+    network = eval_molecules(molecules, use_oracle=False)
+    oracle = eval_molecules(molecules, use_oracle=True)
+
+    print(f"{partition.title()} Dataset, N = {len(molecules)}")
+
+    print(f"  Diversity: {len(set(molecules)) / len(molecules)}")
+    idx = min(max(percentile, 0.0), 1.0)
+    if top_k > 0:
+        idx = len(molecules) - round((1.0 - idx) * top_k)
+    else:
+        idx = round(idx * len(molecules))
+    network_idx = np.argsort(np.array(network))[idx]
+    print(
+        "  Learned Objective (Higher is Better):",
+        f"{network[network_idx]} (Using Oracle: {oracle[network_idx]})"
+    )
+    oracle_idx = np.argsort(np.array(oracle))[idx]
+    print(
+        "  Oracle (Higher is Better):",
+        f"{oracle[oracle_idx]} (Using Network: {network[oracle_idx]})"
+    )
+
+
 def main():
     args = build_args()
     seed_everything(seed=args.seed)
@@ -307,11 +373,22 @@ def main():
         print("N =", args.num_molecules)
         idx = round(min(max(args.percentile, 0.0), 1.0) * args.num_molecules)
         xp_idx = np.argsort(np.array(oracle_xp))[idx]
-        print(f"Training Distribution: {oracle_xp[xp_idx]}")
+        print(
+            "Training Distribution:",
+            f"{oracle_xp[xp_idx]} (Using Network: {network_xp[xp_idx]})"
+        )
         xq_src_idx = np.argsort(np.array(oracle_xq_src))[idx]
-        print(f"Test Distribution: {oracle_xq_src[xq_src_idx]}")
-        xq_gen_idx = np.argsort(np.array(network_xq_gen))[idx]
-        print(f"Generated Distribution: {oracle_xq_gen[xq_gen_idx]}")
+        print(
+            "Test Distribution:",
+            f"{oracle_xq_src[xq_src_idx]}",
+            f"(Using Network: {network_xq_src[xq_src_idx]})"
+        )
+        xq_gen_idx = np.argsort(np.array(oracle_xq_gen))[idx]
+        print(
+            "Generated Distribution:",
+            f"{oracle_xq_gen[xq_gen_idx]}",
+            f"(Using Network: {network_xq_gen[xq_gen_idx]})"
+        )
     else:
         if args.metric.lower() == "tanimoto":
             xp = selfies_to_fingerprints(xp)
