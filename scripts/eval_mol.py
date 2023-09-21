@@ -23,8 +23,12 @@ from typing import Any, Dict, Optional, Sequence, Union
 sys.path.append(".")
 sys.path.append("MolOOD")
 from data.molecule import (
-    SELFIESDataModule, tokens_to_selfies, one_hot_encodings_to_selfies
+    SELFIESDataModule,
+    tokens_to_selfies,
+    one_hot_encodings_to_selfies,
+    one_hot_encodings_to_tokens
 )
+from fcd_torch import FCD
 from models.objective import SELFIESObjective
 from models.vae import SELFIESVAEModule
 from experiment.utility import seed_everything, plot_config, get_device
@@ -57,18 +61,21 @@ def build_args() -> argparse.Namespace:
         type=str,
         help="File path to save the plot. Default not saved."
     )
+    metric_choices = [
+        "tanimoto",
+        "levenshtein",
+        "diversity",
+        "learned_objective",
+        "oracle",
+        "recon"
+    ]
     parser.add_argument(
         "--metric",
         type=str,
-        choices=(
-            "tanimoto",
-            "levenshtein",
-            "diversity",
-            "learned_objective",
-            "oracle"
-        ),
-        default="tanimoto",
-        help="Metric for molecule similarity. Default Tanimoto similarity."
+        nargs="+",
+        choices=metric_choices,
+        default=metric_choices,
+        help="Metric for molecule similarity. Default all metrics evaluated."
     )
     parser.add_argument(
         "--percentile",
@@ -163,6 +170,51 @@ def sample(
             )
             molecules.append(mol[0])
     return molecules, kld
+
+def recon_accuracy(
+    model: Union[Path, str],
+    device: str = "cpu",
+    max_molecule_length: int = 109
+) -> float:
+    """
+    Computes the token-wise reconstruction accuracy of a generator network.
+    Input:
+        model: path to the generative model checkpoint.
+        device: device. Default CPU.
+        max_molecule_length: maximum molecule length. Default is 109 which
+            is the maximum molecule length contained within the training,
+            validation, and test datasets.
+    Returns:
+        Average recon accuracy of the specified model on the test dataset.
+    """
+    device = get_device(device)
+    vocab = load_vocab("./data/molecules/vocab.json")
+    datamodule = SELFIESDataModule(
+        vocab=vocab,
+        batch_size=256,
+        max_molecule_length=max_molecule_length
+    )
+    vae = SELFIESVAEModule.load_from_checkpoint(
+        model, map_location=device
+    )
+    vae.eval()
+    total, recon_acc = 0, []
+    with torch.no_grad():
+        for tokens in tqdm(
+            iter(datamodule.test_dataloader()),
+            desc="Computing Recon Accuracy",
+            leave=False
+        ):
+            n_molecules, _, _ = tokens.size()
+            total += n_molecules
+            recons, _, _ = vae(tokens)
+            compare = torch.eq(
+                torch.argmax(tokens, dim=-1), torch.argmax(recons, dim=-1)
+            )
+            recon_acc.append(
+                n_molecules * torch.sum(compare) / torch.numel(compare)
+            )
+    return sum(recon_acc) / total
 
 
 def eval_molecules(
@@ -341,99 +393,123 @@ def main():
     vocab = load_vocab("./data/molecules/vocab.json")
     xp_vs_xq_src, xp_vs_xq_gen, xq_src_vs_xq_gen = 0.0, 0.0, 0.0
 
-    if args.metric.lower() == "diversity":
+    print("N =", args.num_molecules)
+    if "diversity" in args.metric:
         print("Metric: Diversity (Higher is More Diverse)")
-        print("N =", args.num_molecules)
-        print("Training Distribution:", len(set(xp)) / args.num_molecules)
-        print("Test Distribution:", len(set(xq_src)) / args.num_molecules)
-        print("Generated Distribution:", len(set(xq_gen)) / args.num_molecules)
-    elif args.metric.lower() == "learned_objective":
+        print("  Training Distribution:", len(set(xp)) / args.num_molecules)
+        print("  Test Distribution:", len(set(xq_src)) / args.num_molecules)
+        print("  Generated Distribution:", len(set(xq_gen)) / args.num_molecules)
+    if "learned_objective" in args.metric:
         print("Metric: Learned Objective (Higher is Better)")
-        print("N =", args.num_molecules)
         idx = round(min(max(args.percentile, 0.0), 1.0) * args.num_molecules)
+        if idx >= args.num_molecules:
+            idx = -1
         xp_idx = np.argsort(np.array(network_xp))[idx]
         print(
-            "Training Distribution:",
+            "  Training Distribution:",
             f"{network_xp[xp_idx]} (Using Oracle: {oracle_xp[xp_idx]})"
         )
         xq_src_idx = np.argsort(np.array(network_xq_src))[idx]
         print(
-            "Test Distribution:",
+            "  Test Distribution:",
             f"{network_xq_src[xq_src_idx]}",
             f"(Using Oracle: {oracle_xq_src[xq_src_idx]})"
         )
         xq_gen_idx = np.argsort(np.array(network_xq_gen))[idx]
         print(
-            "Generated Distribution:",
+            "  Generated Distribution:",
             f"{network_xq_gen[xq_gen_idx]}",
             f"(Using Oracle: {oracle_xq_gen[xq_gen_idx]})"
         )
-    elif args.metric.lower() == "oracle":
+    if "oracle" in args.metric:
         print("Metric: Oracle (Higher is Better)")
-        print("N =", args.num_molecules)
         idx = round(min(max(args.percentile, 0.0), 1.0) * args.num_molecules)
+        if idx >= args.num_molecules:
+            idx = -1
         xp_idx = np.argsort(np.array(oracle_xp))[idx]
         print(
-            "Training Distribution:",
+            "  Training Distribution:",
             f"{oracle_xp[xp_idx]} (Using Network: {network_xp[xp_idx]})"
         )
         xq_src_idx = np.argsort(np.array(oracle_xq_src))[idx]
         print(
-            "Test Distribution:",
+            "  Test Distribution:",
             f"{oracle_xq_src[xq_src_idx]}",
             f"(Using Network: {network_xq_src[xq_src_idx]})"
         )
         xq_gen_idx = np.argsort(np.array(oracle_xq_gen))[idx]
         print(
-            "Generated Distribution:",
+            "  Generated Distribution:",
             f"{oracle_xq_gen[xq_gen_idx]}",
             f"(Using Network: {network_xq_gen[xq_gen_idx]})"
         )
-    else:
-        if args.metric.lower() == "tanimoto":
-            xp = selfies_to_fingerprints(xp)
-            xq_src = selfies_to_fingerprints(xq_src)
-            xq_gen = selfies_to_fingerprints(xq_gen)
+    if "fcd" in args.metric:
+        fcd = FCD(device=get_device())
+        xp_smiles = [sf.decoder(mol) for mol in xp]
+        xq_src_smiles = [sf.decoder(mol) for mol in xq_src]
+        xq_gen_smiles = [sf.decoder(mol) for mol in xq_gen]
+        xp_vs_xq_src = fcd(xp_smiles, xq_src_smiles)
+        xp_vs_xq_gen = fcd(xp_smiles, xq_gen_smiles)
+        xq_src_vs_xq_gen = fcd(xq_src_smiles, xq_gen_smiles)
+        print("Metric: FCD (Lower is More Similar)")
+        print("  Training vs. Test Distribution:", xp_vs_xq_src)
+        print("  Training vs. Generated Distribution:", xp_vs_xq_gen)
+        print("  Test vs. Generated Distribution:", xq_src_vs_xq_gen)
+    if "recon" in args.metric:
+        print("Metric: Reconstruction Accuracy (Higher is Better)")
+        print(f"  {args.model}: {recon_accuracy(model=args.model)}")
+    if "levenshtein" in args.metric:
         for i in range(args.num_molecules):
-            if args.metric.lower() == "tanimoto":
-                xp_vs_xq_src += 0.5 * max(
-                    DataStructs.BulkTanimotoSimilarity(xp[i], xq_src)
-                )
-                xp_vs_xq_src += 0.5 * max(
-                    DataStructs.BulkTanimotoSimilarity(xq_src[i], xp)
-                )
-                xp_vs_xq_gen += 0.5 * max(
-                    DataStructs.BulkTanimotoSimilarity(xp[i], xq_gen)
-                )
-                xp_vs_xq_gen += 0.5 * max(
-                    DataStructs.BulkTanimotoSimilarity(xq_gen[i], xp)
-                )
-                xq_src_vs_xq_gen += 0.5 * max(
-                    DataStructs.BulkTanimotoSimilarity(xq_src[i], xq_gen)
-                )
-                xq_src_vs_xq_gen += 0.5 * max(
-                    DataStructs.BulkTanimotoSimilarity(xq_gen[i], xq_src)
-                )
-            elif args.metric.lower() == "levenshtein":
-                x = [str(vocab[tok]) for tok in sf.split_selfies(xp[i])]
-                x_src = [
-                    str(vocab[tok]) for tok in sf.split_selfies(xq_src[i])
-                ]
-                x_gen = [
-                    str(vocab[tok]) for tok in sf.split_selfies(xq_gen[i])
-                ]
-                xp_vs_xq_src += Levenshtein.ratio(x, x_src)
-                xp_vs_xq_gen += Levenshtein.ratio(x, x_gen)
-                xq_src_vs_xq_gen += Levenshtein.ratio(x_src, x_gen)
+            x = [str(vocab[tok]) for tok in sf.split_selfies(xp[i])]
+            x_src = [
+                str(vocab[tok]) for tok in sf.split_selfies(xq_src[i])
+            ]
+            x_gen = [
+                str(vocab[tok]) for tok in sf.split_selfies(xq_gen[i])
+            ]
+            xp_vs_xq_src += Levenshtein.ratio(x, x_src)
+            xp_vs_xq_gen += Levenshtein.ratio(x, x_gen)
+            xq_src_vs_xq_gen += Levenshtein.ratio(x_src, x_gen)
         xp_vs_xq_src /= args.num_molecules
         xp_vs_xq_gen /= args.num_molecules
         xq_src_vs_xq_gen /= args.num_molecules
 
-        print("Metric:", args.metric.title(), "(Higher is More Similar)")
-        print("N =", args.num_molecules)
-        print("Training vs. Test Distribution:", xp_vs_xq_src)
-        print("Training vs. Generated Distribution:", xp_vs_xq_gen)
-        print("Test vs. Generated Distribution:", xq_src_vs_xq_gen)
+        print("Metric: Levenshtein (Higher is More Similar)")
+        print("  Training vs. Test Distribution:", xp_vs_xq_src)
+        print("  Training vs. Generated Distribution:", xp_vs_xq_gen)
+        print("  Test vs. Generated Distribution:", xq_src_vs_xq_gen)
+    if "tanimoto" in args.metric:
+        xp = selfies_to_fingerprints(xp)
+        xq_src = selfies_to_fingerprints(xq_src)
+        xq_gen = selfies_to_fingerprints(xq_gen)
+        for i in range(args.num_molecules):
+            xp_vs_xq_src += 0.5 * max(
+                DataStructs.BulkTanimotoSimilarity(xp[i], xq_src)
+            )
+            xp_vs_xq_src += 0.5 * max(
+                DataStructs.BulkTanimotoSimilarity(xq_src[i], xp)
+            )
+            xp_vs_xq_gen += 0.5 * max(
+                DataStructs.BulkTanimotoSimilarity(xp[i], xq_gen)
+            )
+            xp_vs_xq_gen += 0.5 * max(
+                DataStructs.BulkTanimotoSimilarity(xq_gen[i], xp)
+            )
+            xq_src_vs_xq_gen += 0.5 * max(
+                DataStructs.BulkTanimotoSimilarity(xq_src[i], xq_gen)
+            )
+            xq_src_vs_xq_gen += 0.5 * max(
+                DataStructs.BulkTanimotoSimilarity(xq_gen[i], xq_src)
+            )
+        xp_vs_xq_src /= args.num_molecules
+        xp_vs_xq_gen /= args.num_molecules
+        xq_src_vs_xq_gen /= args.num_molecules
+
+        print("Metric: Tanimoto (Higher is More Similar)")
+        print("  N =", args.num_molecules)
+        print("  Training vs. Test Distribution:", xp_vs_xq_src)
+        print("  Training vs. Generated Distribution:", xp_vs_xq_gen)
+        print("  Test vs. Generated Distribution:", xq_src_vs_xq_gen)
 
     if not args.disable_plot:
         values = {
@@ -441,7 +517,7 @@ def main():
             "Test Distribution Molecules": diff_xq_src,
             "Generated Molecules": diff_xq_gen
         }
-        plot_histograms(values, xrange=[-40, 120], savepath=args.savepath)
+        plot_histograms(values, savepath=args.savepath)
 
 
 if __name__ == "__main__":

@@ -150,6 +150,7 @@ class SeqGANGeneratorModule(pl.LightningModule):
         beta1: float = 0.5,
         beta2: float = 0.999,
         n_critic_per_generator: float = 1.0,
+        c: float = 0.1,
         **kwargs
     ):
         """
@@ -170,6 +171,8 @@ class SeqGANGeneratorModule(pl.LightningModule):
             beta2: beta_2 parameter in Adam optimizer algorithm. Default 0.999.
             n_critic_per_generator: number of times to optimize the critic
                 versus the generator. Default 1.0.
+            c: weight clipping to enforce 1-Lipschitz condition on source
+                critic for `wasserstein`/`em` regularization algorithms.
         """
         super().__init__()
         self.save_hyperparameters()
@@ -187,7 +190,10 @@ class SeqGANGeneratorModule(pl.LightningModule):
         self.regularization = None
         if self.hparams.alpha > 0.0:
             self.regularization = Regularization(
-                method=regularization, vocab=self.hparams.vocab, use_rnn=True
+                method=regularization,
+                vocab=self.hparams.vocab,
+                c=self.hparams.c,
+                use_rnn=True
             )
             self.critic_loss = self.regularization.critic_loss
         else:
