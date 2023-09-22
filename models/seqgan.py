@@ -85,14 +85,16 @@ class MolGANModule(pl.LightningModule):
             embedding_layer_size=self.hparams.embedding_layer_size,
             dropout=self.hparams.dropout,
             use_bidirectional=False,
-            padding_token=self.hparams.padding_token
+            padding_token=self.hparams.padding_token,
+            device=self.device
         )
 
         self.regularization = Regularization(
             method=regularization,
             vocab=self.hparams.vocab,
             c=self.hparams.c,
-            use_rnn=True
+            use_rnn=True,
+            device=self.device
         )
         self.critic_loss = self.regularization.critic_loss
         self.objective = SELFIESObjective(
@@ -123,7 +125,7 @@ class MolGANModule(pl.LightningModule):
             dtype=torch.int
         )
         h = None
-        state = torch.ones(B, 1, dtype=torch.int)
+        state = torch.ones(B, 1, dtype=torch.int, device=self.device)
         molecules = torch.zeros_like(batch)
         for i in range(self.hparams.max_molecule_length):
             logits, h = self.generator(X, h)

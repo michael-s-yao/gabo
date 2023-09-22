@@ -56,6 +56,7 @@ class Regularization(nn.Module):
                     embedding_layer_size=kwargs.get(
                         "embedding_layer_size", 128
                     ),
+                    device=kwargs.get("device", "cpu"),
                     dropout=kwargs.get("dropout", 0.1),
                     use_bidirectional=True,
                     use_sigmoid=True,
@@ -74,6 +75,7 @@ class Regularization(nn.Module):
                     embedding_layer_size=kwargs.get(
                         "embedding_layer_size", 128
                     ),
+                    device=kwargs.get("device", "cpu"),
                     dropout=kwargs.get("dropout", 0.1),
                     use_bidirectional=True,
                     use_sigmoid=False,

@@ -11,7 +11,7 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch
 import torch.nn as nn
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 
 class RNN(nn.Module):
@@ -32,6 +32,7 @@ class RNN(nn.Module):
         num_layers: int,
         embedding_layer_size: int,
         dropout: float,
+        device: Union[torch.device, str] = "cpu",
         padding_token: str = "[pad]",
         use_bidirectional: bool = False,
         use_sigmoid: bool = False,
@@ -46,6 +47,7 @@ class RNN(nn.Module):
             num_layers: number of RNN layers.
             embedding_layer_size: size of the embedding layer.
             dropout: dropout parameter.
+            device: device to place the embedding weights on.
             padding_token: padding token in vocab. Default `[pad]`.
             use_bidirectional: whether to use a bidirectional RNN.
             use_sigmoid: whether to apply sigmoid activation to model output.
@@ -59,6 +61,7 @@ class RNN(nn.Module):
         self.pad = padding_token
         self.num_dimensions = num_dimensions
         self.embedding_layer_size = embedding_layer_size
+        self.device = device
         self.num_layers = num_layers
         self.use_bidirectional = use_bidirectional
         self.use_sigmoid = use_sigmoid
@@ -67,6 +70,7 @@ class RNN(nn.Module):
         self.embedding = nn.Embedding(
             len(self.vocab.keys()), self.embedding_layer_size
         )
+        self.embedding.weight = nn.Parameter(self.embedding.weight.to(device))
         self.dropout = nn.Dropout(dropout)
         if self.cell_type.upper() == "LSTM":
             self.rnn = nn.LSTM(
@@ -113,21 +117,27 @@ class RNN(nn.Module):
             h: a tuple of final hidden and/or cell state tensors with the same
                 dimensions as described in the input.
         """
+        X = X.to(self.embedding.weight.device)
         B, N = X.size()
         if h is None:
             D = self.num_layers * (1 + int(self.use_bidirectional))
             if self.cell_type.upper() == "LSTM":
                 h = (
-                    torch.zeros((D, B, self.num_dimensions)).to(X.device),
-                    torch.zeros((D, B, self.num_dimensions)).to(X.device)
+                    torch.zeros(
+                        (D, B, self.num_dimensions),
+                        device=self.embedding.weight.device
+                    ),
+                    torch.zeros(
+                        (D, B, self.num_dimensions),
+                        device=self.embedding.weight.device
+                    )
                 )
             elif self.cell_type.upper() == "GRU":
-                h = torch.zeros((D, B, self.num_dimensions)).to(X.device)
+                h = torch.zeros(
+                    (D, B, self.num_dimensions),
+                    device=self.embedding.weight.device
+                )
         seq_lengths = torch.ones(B)
-
-        self.embedding = self.embedding.to(X.device)
-        self.rnn = self.rnn.to(X.device)
-        self.linear = self.linear.to(X.device)
 
         encoded_X = nn.utils.rnn.pack_padded_sequence(
             self.dropout(self.embedding(X)),

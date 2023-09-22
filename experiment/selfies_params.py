@@ -25,7 +25,7 @@ class Experiment:
             "--model",
             required=True,
             type=str,
-            help="Model for molecule generation. One of [`SeqGAN`, `VAE`]."
+            help="Model for molecule generation. One of [`MolGAN`, `VAE`]."
         )
         parser.add_argument(
             "--alpha",

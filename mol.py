@@ -62,7 +62,7 @@ def main():
         num_workers=exp.num_workers,
         seed=exp.seed
     )
-    if exp.model.lower() == "seqgan":
+    if exp.model.lower() == "molgan":
         model = MolGANModule(
             vocab,
             max_molecule_length=datamodule.max_molecule_length,
@@ -138,14 +138,14 @@ def main():
         )
     if exp.mode in ("both", "test"):
         try:
-            if exp.model.lower() == "seqgan":
+            if exp.model.lower() == "molgan":
                 model = MolGANModule.load_from_checkpoint(
                     exp.resume_from
                 )
             elif exp.model.lower() == "vae":
                 model = SELFIESVAEModule.load_from_checkpoint(exp.resume_from)
         except RuntimeError:
-            if exp.model.lower() == "seqgan":
+            if exp.model.lower() == "molgan":
                 model = MolGANModule.load_from_checkpoint(
                     exp.resume_from, map_location=torch.device("cpu")
                 )
