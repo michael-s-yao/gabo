@@ -11,7 +11,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
 
-from models.critic import Critic, SeqGANCritic, WeightClipper
+from models.critic import Critic, WeightClipper
+from models.rnn import RNN
 
 
 class Regularization(nn.Module):
@@ -46,25 +47,37 @@ class Regularization(nn.Module):
             "gan_loss", "importance_weighting", "log_importance_weighting"
         ]:
             if self.use_rnn:
-                self.D = SeqGANCritic(
+                self.D = RNN(
+                    cell_type="GRU",
+                    out_dim=1,
                     vocab=kwargs["vocab"],
-                    embedding_dim=kwargs.get("embedding_dim", 64),
-                    hidden_dim=kwargs.get("hidden_dim", 64),
-                    max_molecule_length=kwargs.get("max_molecule_length", 109),
+                    num_dimensions=kwargs.get("num_dimensions", 128),
+                    num_layers=kwargs.get("num_layers", 3),
+                    embedding_layer_size=kwargs.get(
+                        "embedding_layer_size", 128
+                    ),
                     dropout=kwargs.get("dropout", 0.1),
-                    use_sigmoid=True
+                    use_bidirectional=True,
+                    use_sigmoid=True,
+                    return_hidden=False
                 )
             else:
                 self.D = Critic(x_dim=x_dim, use_sigmoid=True)
         elif self.method in ["wasserstein", "em"]:
             if self.use_rnn:
-                self.f = SeqGANCritic(
+                self.f = RNN(
+                    cell_type="GRU",
+                    out_dim=1,
                     vocab=kwargs["vocab"],
-                    embedding_dim=kwargs.get("embedding_dim", 64),
-                    hidden_dim=kwargs.get("hidden_dim", 64),
-                    max_molecule_length=kwargs.get("max_molecule_length", 109),
+                    num_dimensions=kwargs.get("num_dimensions", 128),
+                    num_layers=kwargs.get("num_layers", 3),
+                    embedding_layer_size=kwargs.get(
+                        "embedding_layer_size", 128
+                    ),
                     dropout=kwargs.get("dropout", 0.1),
-                    use_sigmoid=False
+                    use_bidirectional=True,
+                    use_sigmoid=False,
+                    return_hidden=False
                 )
             else:
                 self.f = Critic(x_dim=x_dim, use_sigmoid=False)

@@ -25,8 +25,7 @@ sys.path.append("MolOOD")
 from data.molecule import (
     SELFIESDataModule,
     tokens_to_selfies,
-    one_hot_encodings_to_selfies,
-    one_hot_encodings_to_tokens
+    one_hot_encodings_to_selfies
 )
 from fcd_torch import FCD
 from models.objective import SELFIESObjective
@@ -170,6 +169,7 @@ def sample(
             )
             molecules.append(mol[0])
     return molecules, kld
+
 
 def recon_accuracy(
     model: Union[Path, str],
@@ -398,7 +398,9 @@ def main():
         print("Metric: Diversity (Higher is More Diverse)")
         print("  Training Distribution:", len(set(xp)) / args.num_molecules)
         print("  Test Distribution:", len(set(xq_src)) / args.num_molecules)
-        print("  Generated Distribution:", len(set(xq_gen)) / args.num_molecules)
+        print(
+            "  Generated Distribution:", len(set(xq_gen)) / args.num_molecules
+        )
     if "learned_objective" in args.metric:
         print("Metric: Learned Objective (Higher is Better)")
         idx = round(min(max(args.percentile, 0.0), 1.0) * args.num_molecules)
