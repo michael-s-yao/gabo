@@ -297,14 +297,12 @@ class MolGANModule(pl.LightningModule):
             )
             return [optimizer_G, optimizer_D]
         else:
-            optimizer_G = optim.Adam(
+            optimizer_G = optim.SGD(
                 self.generator.parameters(),
-                lr=self.hparams.lr,
-                betas=(self.hparams.beta1, self.hparams.beta2)
+                lr=self.hparams.lr
             )
-            optimizer_D = optim.Adam(
+            optimizer_D = optim.SGD(
                 self.regularization.D.parameters(),
-                lr=self.hparams.lr,
-                betas=(self.hparams.beta1, self.hparams.beta2)
+                lr=self.hparams.lr
             )
             return [optimizer_G, optimizer_D]
