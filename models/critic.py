@@ -82,6 +82,7 @@ class Critic(nn.Module):
         Returns:
             Probability of x being from source distribution.
         """
+        x = x.to(torch.float)
         return torch.squeeze(self.model(x.view(x.size(0), -1)), dim=-1)
 
 

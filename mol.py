@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 import lightning.pytorch as pl
 from lightning.pytorch.strategies.ddp import DDPStrategy
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from typing import Dict, Union
 
@@ -65,6 +65,7 @@ def main():
     if exp.model.lower() == "molgan":
         model = MolGANModule(
             vocab,
+            architecture=exp.architecture,
             max_molecule_length=datamodule.max_molecule_length,
             alpha=exp.alpha,
             regularization=exp.regularization,
@@ -104,6 +105,16 @@ def main():
         )
     ]
     callbacks[0].CHECKPOINT_NAME_LAST = f"{meta}_{{epoch}}_last"
+    if exp.enable_early_stopping:
+        callbacks.append(
+            EarlyStopping(
+                monitor="val_loss",
+                min_delta=0.0,
+                patience=20,
+                verbose=False,
+                mode="min"
+            )
+        )
 
     logger = False
     if (

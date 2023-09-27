@@ -3,6 +3,8 @@ Defines a utility function `block()` to generate a layer of a network.
 
 Author(s):
     Michael Yao
+
+Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch.nn as nn
 

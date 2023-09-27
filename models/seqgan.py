@@ -18,6 +18,7 @@ from typing import Dict, Optional, Sequence
 
 from data.molecule import one_hot_encodings_to_tokens, tokens_to_selfies
 from models.objective import SELFIESObjective
+from models.fcnn import FCNN
 from models.rnn import RNN
 from models.regularization import Regularization
 
@@ -31,6 +32,7 @@ class MolGANModule(pl.LightningModule):
     def __init__(
         self,
         vocab: Dict[str, int],
+        architecture: str,
         max_molecule_length: int = 109,
         alpha: float = 0.0,
         regularization: str = "gan_loss",
@@ -44,12 +46,13 @@ class MolGANModule(pl.LightningModule):
         beta1: float = 0.5,
         beta2: float = 0.999,
         n_critic_per_generator: float = 1.0,
-        c: float = 0.1,
+        c: float = 0.01,
         **kwargs
     ):
         """
         Args:
             vocab: vocabulary dict.
+            architecture: GAN backbone to use. One of [`rnn`, `fcnn`].
             max_molecule_length: maximum molecule length. Default 109.
             alpha: source critic regularization weighting term. Default no
                 source critic regularization.
@@ -76,24 +79,40 @@ class MolGANModule(pl.LightningModule):
         self.hparams.alpha = min(max(alpha, 0.0), 1.0)
         self.automatic_optimization = False
 
-        self.generator = RNN(
-            cell_type="LSTM",
-            out_dim=len(self.hparams.vocab.keys()),
-            vocab=self.hparams.vocab,
-            num_dimensions=self.hparams.num_dimensions,
-            num_layers=self.hparams.num_layers,
-            embedding_layer_size=self.hparams.embedding_layer_size,
-            dropout=self.hparams.dropout,
-            use_bidirectional=False,
-            padding_token=self.hparams.padding_token,
-            device=self.device
-        )
+        if self.hparams.architecture.lower() == "rnn":
+            self.generator = RNN(
+                cell_type="LSTM",
+                out_dim=len(self.hparams.vocab.keys()),
+                vocab=self.hparams.vocab,
+                num_dimensions=self.hparams.num_dimensions,
+                num_layers=self.hparams.num_layers,
+                embedding_layer_size=self.hparams.embedding_layer_size,
+                dropout=self.hparams.dropout,
+                use_bidirectional=False,
+                padding_token=self.hparams.padding_token,
+                device=self.device
+            )
+        elif self.hparams.architecture.lower() == "fcnn":
+            out_dim = self.hparams.max_molecule_length * len(
+                self.hparams.vocab.keys()
+            )
+            self.generator = FCNN(
+                in_dim=self.hparams.embedding_layer_size,
+                out_dim=out_dim,
+                hidden_dims=[2_048, 4_096],
+                dropout=self.hparams.dropout
+            )
+        else:
+            raise NotImplementedError(
+                f"Backbone {self.hparams.architecture} not implemented."
+            )
 
         self.regularization = Regularization(
             method=regularization,
+            x_dim=self.hparams.max_molecule_length,
             vocab=self.hparams.vocab,
             c=self.hparams.c,
-            use_rnn=True,
+            use_rnn=bool(self.hparams.architecture.lower() == "rnn"),
             device=self.device
         )
         self.critic_loss = self.regularization.critic_loss
@@ -118,23 +137,32 @@ class MolGANModule(pl.LightningModule):
         Returns:
             Generated molecules with dimensions BN.
         """
-        B, _ = batch.size()
-        X = torch.full(
-            (B, 1),
-            self.hparams.vocab[self.hparams.padding_token],
-            dtype=torch.int
-        )
-        h = None
-        state = torch.ones(B, 1, dtype=torch.int, device=self.device)
-        molecules = torch.zeros_like(batch)
-        for i in range(self.hparams.max_molecule_length):
-            logits, h = self.generator(X, h)
-            probs = torch.squeeze(torch.softmax(logits, dim=-1))
-            X = torch.multinomial(probs, 1) * state
-            state = (X > 1).to(torch.int)
-            molecules[:, i] = torch.squeeze(X)
-            if torch.sum(state) == 0:
-                break
+        B, N = batch.size()
+        if self.hparams.architecture.lower() == "rnn":
+            X = torch.full(
+                (B, 1),
+                self.hparams.vocab[self.hparams.padding_token],
+                dtype=torch.int
+            )
+            h = None
+            state = torch.ones(B, 1, dtype=torch.int, device=self.device)
+            molecules = torch.zeros_like(batch)
+            for i in range(self.hparams.max_molecule_length):
+                logits, h = self.generator(X, h)
+                probs = torch.squeeze(torch.softmax(logits, dim=-1))
+                X = torch.multinomial(probs, 1) * state
+                state = (X > 1).to(torch.int)
+                molecules[:, i] = torch.squeeze(X)
+                if torch.sum(state) == 0:
+                    break
+        elif self.hparams.architecture.lower() == "fcnn":
+            z = torch.randn((B, self.hparams.embedding_layer_size)).to(
+                batch.device
+            )
+            molecules = self.generator(z).reshape(
+                (B, N, len(self.hparams.vocab.keys()))
+            )
+            molecules = torch.argmax(molecules, dim=-1)
         return molecules
 
     @torch.no_grad()
@@ -149,13 +177,17 @@ class MolGANModule(pl.LightningModule):
         training_state = self.generator.training
         if training_state:
             self.generator.eval()
-        dummy_batch = torch.zeros((
-            n, self.max_molecule_length, len(self.hparams.vocab.keys())
-        ))
-        molecules = self(dummy_batch)
+        if self.hparams.architecture.lower() == "rnn":
+            dummy_batch = torch.zeros(
+                (n, self.hparams.max_molecule_length), dtype=torch.int
+            )
+            molecules = self(dummy_batch)
+        elif self.hparams.architecture.lower() == "fcnn":
+            z = torch.randn((n, self.hparams.embedding_layer_size))
+            molecules = self(z)
         if training_state:
             self.generator.train()
-        return tokens_to_selfies(molecules)
+        return tokens_to_selfies(molecules, self.hparams.vocab)
 
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> None:
         """

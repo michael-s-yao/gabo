@@ -28,6 +28,12 @@ class Experiment:
             help="Model for molecule generation. One of [`MolGAN`, `VAE`]."
         )
         parser.add_argument(
+            "--architecture",
+            default="fcnn",
+            type=str,
+            help="Backbone MolGAN model architecture. One of [`FCNN`, `RNN`]."
+        )
+        parser.add_argument(
             "--alpha",
             default=0.5,
             type=float,
@@ -138,6 +144,11 @@ class Experiment:
             "--disable_wandb",
             action="store_true",
             help="Disable Weights and Biases logging."
+        )
+        parser.add_argument(
+            "--enable_early_stopping",
+            action="store_true",
+            help="Enable early stopping based on validation loss."
         )
 
         self.args = parser.parse_args()
