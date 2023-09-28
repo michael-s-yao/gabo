@@ -252,10 +252,9 @@ class SELFIESVAEModule(pl.LightningModule):
             )
             return [optimizer_vae, optimizer_D]
 
-        optimizer_vae = optim.Adam(
+        optimizer_vae = optim.SGD(
             vae_params,
             lr=self.hparams.lr,
-            betas=(self.hparams.beta1, self.hparams.beta2)
         )
         if self.hparams.regularization == "elbo":
             return [optimizer_vae]
