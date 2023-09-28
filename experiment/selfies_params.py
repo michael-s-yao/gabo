@@ -74,7 +74,7 @@ class Experiment:
         )
         parser.add_argument(
             "--lr_generator",
-            default=0.0001,
+            default=0.001,
             type=float,
             help="Generator learning rate. Default 0.0001."
         )

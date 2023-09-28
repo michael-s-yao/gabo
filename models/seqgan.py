@@ -36,13 +36,13 @@ class MolGANModule(pl.LightningModule):
         max_molecule_length: int = 109,
         alpha: float = 0.0,
         regularization: str = "gan_loss",
-        num_dimensions: int = 128,
+        num_dimensions: int = 1_024,
         num_layers: int = 3,
         embedding_layer_size: int = 128,
         dropout: float = 0.1,
         padding_token: str = "[pad]",
-        lr_generator: float = 0.0001,
-        lr_critic: float = 0.00001,
+        lr_generator: float = 0.001,
+        lr_critic: float = 0.00005,
         clip: Optional[float] = None,
         beta1: float = 0.5,
         beta2: float = 0.999,
@@ -207,8 +207,7 @@ class MolGANModule(pl.LightningModule):
         Returns:
             None.
         """
-        batch = one_hot_encodings_to_tokens(batch).to(torch.float)
-        batch.requires_grad_(True)
+        batch = one_hot_encodings_to_tokens(batch)
         B, N = batch.size()
         optimizer_G, optimizer_D = self.optimizers()
         generated = self(batch)
