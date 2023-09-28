@@ -5,11 +5,22 @@ Author(s):
     Michael Yao @michael-s-yao
     Yimeng Zeng @yimeng-zeng
 
+Citations(s):
+    [1] Krenn M, Hase F, Nigam AK, Friederich P, Aspuru-Guzik A. Self-
+        referencing embedded strings (SELFIES): A 100% robust molecular string
+        representation. Machine Learning: Science and Technology 1(4): 045024.
+        (2020). https://doi.org/10.1088/2632-2153/aba947
+    [2] Ramakrishnan R, Dral PO, Rupp M, Anatole von Lilienfeld O. Quantum
+        chemistry structures and properties of 134 kilo molecules. Nat Sci
+        Data 1: 140022. (2014). https://doi.org/10.1038/sdata.2014.22
+
 Adapted from Haydn Jones @haydn-jones molformers repo.
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 from itertools import chain
+from math import isclose
+import numpy as np
 import os
 import gzip
 from pathlib import Path
@@ -118,6 +129,130 @@ class SELFIESDataModule(pl.LightningDataModule):
         )
 
 
+class QM9DataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        fn: Union[Path, str] = "./data/molecules/2RGSMILES_QM9.txt",
+        partition: Sequence[float] = [0.8, 0.1, 0.1],
+        batch_size: int = 128,
+        num_workers: int = os.cpu_count() // 2,
+        seed: int = 42,
+    ):
+        """
+        Args:
+            fn: file of the SELFIES representation of the QM9 dataset.
+            partition: partition for training, validation, and test datasets.
+                Default 80% training, 10% validation, and 10% test.
+            batch_size: batch size. Default 128.
+            num_workers: number of workers. Default half the CPU count.
+            seed: random seed. Default 42.
+        """
+        super().__init__()
+        self.fn = fn
+        self.partition = partition
+        if not isclose(sum(partition), 1.0):
+            raise ValueError(
+                f"Parition fractions must sum to 1.0, got {partition}."
+            )
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.seed = seed
+        self.rng = np.random.RandomState(self.seed)
+
+    def prepare_data(self) -> None:
+        """
+        Loads the dataset and other relevant parameters from the dataset.
+        Input:
+            None.
+        Returns:
+            None.
+        """
+        with open(self.fn, "rb") as f:
+            self.molecules = [
+                str(x.strip()).split(",")[1][:-1] for x in f.readlines()[1:]
+            ]
+            self.molecules = np.array(list(set(self.molecules)))
+            self.rng.shuffle(self.molecules)
+        vocab = sorted(list(set(list(" ".join(self.molecules)))))
+        self.vocab = {tok: idx for idx, tok in enumerate(vocab)}
+        self.max_molecule_length = max(map(lambda x: len(x), self.molecules))
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        """
+        Partitions the dataset into training, validation, and/or test sets.
+        Input:
+            stage: model training or evaluation stage. One of [`fit`, `test`,
+                None].
+        Returns:
+            None.
+        """
+        train_frac, _, test_frac = self.partition
+        num_train = round(train_frac * len(self.molecules))
+        num_test = round(test_frac * len(self.molecules))
+        if stage is None or stage == "fit":
+            self.train = QM9Dataset(
+                molecules=self.molecules[:num_train],
+                vocab=self.vocab,
+                max_molecule_length=self.max_molecule_length
+            )
+            self.val = QM9Dataset(
+                molecules=self.molecules[num_train:-num_test],
+                vocab=self.vocab,
+                max_molecule_length=self.max_molecule_length
+            )
+        if stage is None or stage == "test":
+            self.test = QM9Dataset(
+                molecules=self.molecules[-num_test:],
+                vocab=self.vocab,
+                max_molecule_length=self.max_molecule_length
+            )
+
+    def train_dataloader(self) -> DataLoader:
+        """
+        Retrieves the training dataloader.
+        Input:
+            None.
+        Returns:
+            The training dataloader.
+        """
+        return DataLoader(
+            self.train,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers
+        )
+
+    def val_dataloader(self) -> DataLoader:
+        """
+        Retrieves the validation dataloader.
+        Input:
+            None.
+        Returns:
+            The validation dataloader.
+        """
+        return DataLoader(
+            self.val,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers
+        )
+
+    def test_dataloader(self) -> DataLoader:
+        """
+        Retrieves the test dataloader.
+        Input:
+            None.
+        Returns:
+            The test dataloader.
+        """
+        return DataLoader(
+            self.test,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers
+        )
+
+
 class SELFIESDataset(Dataset):
     def __init__(
         self,
@@ -184,6 +319,58 @@ class SELFIESDataset(Dataset):
                 len(batch[batch_idx]), self.max_molecule_length
             ):
                 enc[batch_idx, seq_idx, self.vocab[self.pad]] = 1.0
+        return enc
+
+
+class QM9Dataset(Dataset):
+    def __init__(
+        self,
+        molecules: Sequence[str],
+        vocab: Dict[str, int],
+        max_molecule_length: int,
+        padding_token: str = " "
+    ):
+        """
+        Args:
+            molecules: a list of molecules in SELFIES representation.
+            vocab: a dictionary mapping molecular components to numbers.
+            max_molecule_length: maximum molecule length.
+            padding_token: padding token. Default ` `.
+        """
+        super().__init__()
+        self.molecules = molecules
+        self.vocab = vocab
+        self.max_molecule_length = max_molecule_length
+        self.pad = padding_token
+
+    def __len__(self) -> int:
+        """
+        Returns the length of the dataset.
+        Input:
+            None.
+        Returns:
+            Length of the dataset.
+        """
+        return len(self.molecules)
+
+    def __getitem__(self, idx: int) -> torch.Tensor:
+        """
+        Retrieves a specified item from the dataset.
+        Input:
+            idx: the index of the element to retrieve.
+        Returns:
+            The `idx`th molecule from the dataset as a padded one-hot encoded
+            vector.
+        """
+        mol = self.molecules[idx]
+        enc = torch.zeros(
+            (self.max_molecule_length, len(self.vocab.keys())),
+            dtype=torch.float
+        )
+        for idx, tok in enumerate(
+            mol + self.pad * (self.max_molecule_length - len(mol))
+        ):
+            enc[idx, self.vocab[tok]] = 1.0
         return enc
 
 

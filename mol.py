@@ -18,7 +18,7 @@ from lightning.pytorch.loggers import WandbLogger
 from typing import Dict, Union
 
 sys.path.append("MolOOD")
-from data.molecule import SELFIESDataModule
+from data.molecule import SELFIESDataModule, QM9DataModule
 from models.seqgan import MolGANModule
 from models.vae import SELFIESVAEModule
 from experiment.selfies_params import Experiment
@@ -55,14 +55,24 @@ def main():
 
     vocab = load_vocab(os.path.join(exp.datadir, "vocab.json"))
 
-    datamodule = SELFIESDataModule(
-        vocab=vocab,
-        root=exp.datadir,
-        batch_size=exp.batch_size,
-        num_workers=exp.num_workers,
-        seed=exp.seed
-    )
+    if exp.use_QM9:
+        datamodule = QM9DataModule(
+            batch_size=exp.batch_size,
+            num_workers=exp.num_workers,
+            seed=exp.seed
+        )
+        datamodule.prepare_data()
+        vocab = datamodule.vocab
+    else:
+        datamodule = SELFIESDataModule(
+            vocab=vocab,
+            root=exp.datadir,
+            batch_size=exp.batch_size,
+            num_workers=exp.num_workers,
+            seed=exp.seed
+        )
     if exp.model.lower() == "molgan":
+        hidden_dims = [1_024] if exp.use_QM9 else [2_048, 4_096]
         model = MolGANModule(
             vocab,
             architecture=exp.architecture,
@@ -73,7 +83,8 @@ def main():
             clip=exp.clip,
             beta1=beta1,
             beta2=beta2,
-            n_critic_per_generator=exp.n_critic_per_generator
+            n_critic_per_generator=exp.n_critic_per_generator,
+            hidden_dims=hidden_dims
         )
     elif exp.model.lower() == "vae":
         model = SELFIESVAEModule(

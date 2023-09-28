@@ -150,6 +150,11 @@ class Experiment:
             action="store_true",
             help="Enable early stopping based on validation loss."
         )
+        parser.add_argument(
+            "--use_QM9",
+            action="store_true",
+            help="Use the QM9 dataset from Ramakrishnan et al. (2014)."
+        )
 
         self.args = parser.parse_args()
 

@@ -99,7 +99,7 @@ class MolGANModule(pl.LightningModule):
             self.generator = FCNN(
                 in_dim=self.hparams.embedding_layer_size,
                 out_dim=out_dim,
-                hidden_dims=[2_048, 4_096],
+                hidden_dims=kwargs.get("hidden_dims", [2_048, 4_096]),
                 dropout=self.hparams.dropout
             )
         else:
@@ -107,19 +107,23 @@ class MolGANModule(pl.LightningModule):
                 f"Backbone {self.hparams.architecture} not implemented."
             )
 
-        self.regularization = Regularization(
-            method=regularization,
-            x_dim=self.hparams.max_molecule_length,
-            vocab=self.hparams.vocab,
-            c=self.hparams.c,
-            use_rnn=bool(self.hparams.architecture.lower() == "rnn"),
-            device=self.device
-        )
-        self.critic_loss = self.regularization.critic_loss
-        self.objective = SELFIESObjective(
-            self.hparams.vocab,
-            surrogate_ckpt="./MolOOD/checkpoints/regressor.ckpt"
-        )
+        self.regularization = None
+        if self.hparams.alpha > 0.0:
+            self.regularization = Regularization(
+                method=regularization,
+                x_dim=self.hparams.max_molecule_length,
+                vocab=self.hparams.vocab,
+                c=self.hparams.c,
+                use_rnn=bool(self.hparams.architecture.lower() == "rnn"),
+                device=self.device
+            )
+            self.critic_loss = self.regularization.critic_loss
+        self.objective = None
+        if self.hparams.alpha < 1.0:
+            self.objective = SELFIESObjective(
+                self.hparams.vocab,
+                surrogate_ckpt="./MolOOD/checkpoints/regressor.ckpt",
+            )
 
         if self.hparams.n_critic_per_generator >= 1.0:
             self.f_G, self.f_D = round(self.hparams.n_critic_per_generator), 1
@@ -183,7 +187,9 @@ class MolGANModule(pl.LightningModule):
             )
             molecules = self(dummy_batch)
         elif self.hparams.architecture.lower() == "fcnn":
-            z = torch.randn((n, self.hparams.embedding_layer_size))
+            z = torch.randn((n, self.hparams.embedding_layer_size)).to(
+                self.device
+            )
             molecules = self(z)
         if training_state:
             self.generator.train()
@@ -198,7 +204,8 @@ class MolGANModule(pl.LightningModule):
         Returns:
             None.
         """
-        batch = one_hot_encodings_to_tokens(batch)
+        batch = one_hot_encodings_to_tokens(batch).to(torch.float)
+        batch.requires_grad_(True)
         B, N = batch.size()
         optimizer_G, optimizer_D = self.optimizers()
         generated = self(batch)
@@ -206,8 +213,12 @@ class MolGANModule(pl.LightningModule):
         if batch_idx % self.f_G == 0:
             self.toggle_optimizer(optimizer_G)
 
-            train_obj = torch.mean(self.objective(generated))
-            train_reg = self.regularization(batch, generated)
+            train_obj = 0.0
+            if self.objective:
+                train_obj = torch.mean(self.objective(generated))
+            train_reg = 0.0
+            if self.regularization:
+                train_reg = self.regularization(batch, generated)
             loss_G = ((self.hparams.alpha - 1.0) * train_obj) + (
                 self.hparams.alpha * train_reg
             )
@@ -259,15 +270,18 @@ class MolGANModule(pl.LightningModule):
         optimizer_G, optimizer_D = self.optimizers()
         generated = self(batch)
 
-        val_obj = torch.mean(self.objective(generated))
-        val_reg = self.regularization(batch, generated)
+        val_obj = 0.0
+        if self.objective:
+            val_obj = torch.mean(self.objective(generated))
+            self.log("val_obj", val_obj, prog_bar=True, sync_dist=True)
+        val_reg = 0.0
+        if self.regularization:
+            val_reg = self.regularization(batch, generated)
+            self.log("val_reg", val_reg, prog_bar=True, sync_dist=True)
         val_loss = ((self.hparams.alpha - 1.0) * val_obj) + (
             self.hparams.alpha * val_reg
         )
-
         self.log("val_loss", val_loss, prog_bar=False, sync_dist=True)
-        self.log("val_obj", val_obj, prog_bar=True, sync_dist=True)
-        self.log("val_reg", val_reg, prog_bar=True, sync_dist=True)
 
     def test_step(self, batch: torch.Tensor, batch_idx: int) -> None:
         """
@@ -292,7 +306,7 @@ class MolGANModule(pl.LightningModule):
             optimizer_G = optim.RMSprop(
                 self.generator.parameters(), lr=self.hparams.lr
             )
-            optimizer_D = optim.RMSprop(
+            optimizer_D = optim.SGD(
                 self.regularization.f.parameters(), lr=self.hparams.lr
             )
             return [optimizer_G, optimizer_D]

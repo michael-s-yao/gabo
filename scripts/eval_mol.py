@@ -30,6 +30,7 @@ from data.molecule import (
 from fcd_torch import FCD
 from models.objective import SELFIESObjective
 from models.vae import SELFIESVAEModule
+from models.seqgan import MolGANModule
 from experiment.utility import seed_everything, plot_config, get_device
 from mol import load_vocab
 from MolOOD.mol_oracle.mol_utils import logp_wrapper
@@ -169,6 +170,47 @@ def sample(
             )
             molecules.append(mol[0])
     return molecules, kld
+
+
+def sample_MolGAN(
+    n: int,
+    model: Optional[Union[Path, str]] = None,
+    max_molecule_length: int = 109,
+    device: str = "cpu"
+) -> Sequence[Any]:
+    """
+    Generates n molecules according to a MolGAN generator network.
+    Input:
+        n: number of molecules to generate.
+        model: path to the generative model checkpoint. If None, then n
+            molecules from the test dataset will be sampled instead.
+        max_molecule_length: maximum molecule length. Default is 109 which
+            is the maximum molecule length contained within the training,
+            validation, and test datasets.
+        device: device. Default CPU.
+    Returns:
+        molecules: a generated batch of molecules using SELFIES representation.
+    """
+    device = get_device(device)
+    vocab = load_vocab("./data/molecules/vocab.json")
+
+    if not model:
+        datamodule = SELFIESDataModule(
+            vocab=vocab,
+            batch_size=n,
+            max_molecule_length=max_molecule_length
+        )
+        molecules = one_hot_encodings_to_selfies(
+            next(iter(datamodule.test_dataloader())), vocab=vocab
+        )
+        return molecules
+
+    gan = MolGANModule.load_from_checkpoint(model, map_location=device)
+    gan.eval()
+    dummy = torch.zeros((n, gan.hparams.max_molecule_length))
+    with torch.no_grad():
+        output = gan(dummy)
+    return tokens_to_selfies(output, vocab)
 
 
 def recon_accuracy(
