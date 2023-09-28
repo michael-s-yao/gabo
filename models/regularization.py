@@ -9,7 +9,7 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 from models.critic import Critic, WeightClipper
 from models.rnn import RNN
@@ -22,6 +22,7 @@ class Regularization(nn.Module):
         self,
         method: Optional[str] = None,
         x_dim: Optional[Tuple[int]] = (1, 28, 28),
+        intermediate_layers: Sequence[int] = (512, 256),
         c: Optional[float] = 0.01,
         KLD_alpha: Optional[float] = 1e-5,
         use_rnn: bool = False,
@@ -34,6 +35,8 @@ class Regularization(nn.Module):
                 `wasserstein`, `em`, `elbo`].
             x_dim: dimensions CHW of the output image from the generator G.
                 Default MNIST dimensions (1, 28, 28).
+            intermediate_layers: intermediate layer output dimensions. Default
+                (512, 256).
             c: weight clipping to enforce 1-Lipschitz condition on source
                 critic for `wasserstein`/`em` regularization algorithms.
             KLD_alpha: weighting of KL Divergence loss term, only applicable
@@ -63,7 +66,11 @@ class Regularization(nn.Module):
                     return_hidden=False
                 )
             else:
-                self.D = Critic(x_dim=x_dim, use_sigmoid=True)
+                self.D = Critic(
+                    x_dim=x_dim,
+                    intermediate_layers=intermediate_layers,
+                    use_sigmoid=True
+                )
         elif self.method in ["wasserstein", "em"]:
             if self.use_rnn:
                 self.f = RNN(
@@ -82,7 +89,11 @@ class Regularization(nn.Module):
                     return_hidden=False
                 )
             else:
-                self.f = Critic(x_dim=x_dim, use_sigmoid=False)
+                self.f = Critic(
+                    x_dim=x_dim,
+                    intermediate_layers=intermediate_layers,
+                    use_sigmoid=False
+                )
             self.clipper = WeightClipper(c=c)
             self.clip()
         elif self.method == "elbo":

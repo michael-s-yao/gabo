@@ -79,7 +79,8 @@ def main():
             max_molecule_length=datamodule.max_molecule_length,
             alpha=exp.alpha,
             regularization=exp.regularization,
-            lr=exp.lr,
+            lr_generator=exp.lr_generator,
+            lr_critic=exp.lr_critic,
             clip=exp.clip,
             beta1=beta1,
             beta2=beta2,
@@ -149,7 +150,7 @@ def main():
         callbacks=callbacks,
         deterministic=True,
         fast_dev_run=exp.fast_dev_run,
-        strategy=strategy
+        strategy=strategy,
     )
 
     if exp.mode in ("both", "train"):

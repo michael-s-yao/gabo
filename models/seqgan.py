@@ -41,7 +41,8 @@ class MolGANModule(pl.LightningModule):
         embedding_layer_size: int = 128,
         dropout: float = 0.1,
         padding_token: str = "[pad]",
-        lr: float = 0.0001,
+        lr_generator: float = 0.0001,
+        lr_critic: float = 0.00001,
         clip: Optional[float] = None,
         beta1: float = 0.5,
         beta2: float = 0.999,
@@ -65,7 +66,8 @@ class MolGANModule(pl.LightningModule):
             dropout: dropout parameter.
             use_bidirectional: whether to use a bidirectional RNN.
             padding_token: padding token in vocab. Default `[pad]`.
-            lr: learning rate. Default 0.0001.
+            lr_generator: learning rate for the generator. Default 0.0001.
+            lr_critic: learning rate for the critic. Default 0.00001.
             clip: gradient clipping. Default no clipping.
             beta1: beta_1 parameter in Adam optimizer algorithm. Default 0.5.
             beta2: beta_2 parameter in Adam optimizer algorithm. Default 0.999.
@@ -99,7 +101,7 @@ class MolGANModule(pl.LightningModule):
             self.generator = FCNN(
                 in_dim=self.hparams.embedding_layer_size,
                 out_dim=out_dim,
-                hidden_dims=kwargs.get("hidden_dims", [2_048, 4_096]),
+                hidden_dims=kwargs.get("hidden_dims", [2_048, 4_096, 8_192]),
                 dropout=self.hparams.dropout
             )
         else:
@@ -112,6 +114,7 @@ class MolGANModule(pl.LightningModule):
             self.regularization = Regularization(
                 method=regularization,
                 x_dim=self.hparams.max_molecule_length,
+                intermediate_layers=[64],
                 vocab=self.hparams.vocab,
                 c=self.hparams.c,
                 use_rnn=bool(self.hparams.architecture.lower() == "rnn"),
@@ -304,19 +307,19 @@ class MolGANModule(pl.LightningModule):
         """
         if self.hparams.regularization in ["wasserstein", "em"]:
             optimizer_G = optim.RMSprop(
-                self.generator.parameters(), lr=self.hparams.lr
+                self.generator.parameters(), lr=self.hparams.lr_generator
             )
             optimizer_D = optim.SGD(
-                self.regularization.f.parameters(), lr=self.hparams.lr
+                self.regularization.f.parameters(), lr=self.hparams.lr_critic
             )
             return [optimizer_G, optimizer_D]
         else:
             optimizer_G = optim.SGD(
                 self.generator.parameters(),
-                lr=self.hparams.lr
+                lr=self.hparams.lr_generator
             )
             optimizer_D = optim.SGD(
                 self.regularization.D.parameters(),
-                lr=self.hparams.lr
+                lr=self.hparams.lr_critic
             )
             return [optimizer_G, optimizer_D]
