@@ -113,6 +113,7 @@ def main():
         deterministic=True,
         fast_dev_run=exp.fast_dev_run,
         strategy=strategy,
+        devices=exp.devices
     )
 
     if exp.mode in ("both", "train"):

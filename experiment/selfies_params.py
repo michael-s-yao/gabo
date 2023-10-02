@@ -91,6 +91,13 @@ class Experiment:
             "--device", default="auto", type=str, help="Device. Default auto."
         )
         parser.add_argument(
+            "--devices",
+            default=1,
+            type=int,
+            nargs="+",
+            help="Devices. Default auto."
+        )
+        parser.add_argument(
             "--num_workers",
             default=0,
             type=int,
