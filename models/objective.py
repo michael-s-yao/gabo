@@ -86,9 +86,6 @@ class SELFIESObjective(nn.Module):
         Returns:
             Value of the objective function for the input molecules.
         """
-        start = self.vocab[self.start] * torch.ones((tokens.size(0), 1))
-        stop = self.vocab[self.stop] * torch.ones((tokens.size(0), 1))
-        tokens = torch.cat((start.to(tokens), tokens, stop.to(tokens)), dim=-1)
         self.model.zero_grad()
         encoding, pad_mask = self.model.encode(tokens)
 

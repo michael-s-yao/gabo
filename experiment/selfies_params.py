@@ -22,42 +22,10 @@ class Experiment:
         )
 
         parser.add_argument(
-            "--model",
-            required=True,
-            type=str,
-            help="Model for molecule generation. One of [`MolGAN`, `VAE`]."
-        )
-        parser.add_argument(
-            "--architecture",
-            default="fcnn",
-            type=str,
-            help="Backbone MolGAN model architecture. One of [`FCNN`, `RNN`]."
-        )
-        parser.add_argument(
             "--alpha",
             default=0.5,
             type=float,
             help="Relative regularization weighting. Default 0.5."
-        )
-        parser.add_argument(
-            "--KLD_alpha",
-            default=1e-5,
-            type=float,
-            help="KL divergence weighting in ELBO loss. Default 1e-5."
-        )
-        parser.add_argument(
-            "--regularization",
-            default="gan_loss",
-            type=str,
-            choices=(
-                "gan_loss",
-                "importance_weighting",
-                "log_importance_weighting",
-                "wasserstein",
-                "em",
-                "elbo"
-            ),
-            help="In-distribution regularization. Default `gan_loss`."
         )
         parser.add_argument(
             "--resume_from",
@@ -73,33 +41,30 @@ class Experiment:
             help="Data directory. Default `./MolOOD/data`."
         )
         parser.add_argument(
-            "--lr_generator",
+            "--lr",
             default=0.001,
             type=float,
-            help="Generator learning rate. Default 0.0001."
+            help="Learning rate. Default 0.0001."
         )
         parser.add_argument(
-            "--lr_critic",
-            default=0.00002,
+            "--optimizer",
+            default="Adam",
+            type=str,
+            choices=("SGD", "Adam", "RMSProp"),
+            help="Optimizer algorithm. Default Adam optimizer."
+        )
+        parser.add_argument(
+            "--beta",
+            default=[0.9, 0.999],
             type=float,
-            help="Critic learning rate. Default 0.00002."
-        )
-        beta_help = "Beta parameters for Adam optimizer. "
-        beta_help += "Default beta_1 = 0.9, beta_2 = 0.999."
-        parser.add_argument(
-            "--beta", default=[0.9, 0.999], type=float, nargs=2, help=beta_help
+            nargs="+",
+            help="Betas/momentum optimizer hyperparameter."
         )
         parser.add_argument(
-            "--clip",
-            default=None,
+            "--weight_decay",
+            default=0.001,
             type=float,
-            help="Gradient clipping. Default no clipping."
-        )
-        parser.add_argument(
-            "--n_critic_per_generator",
-            default=1.0,
-            type=float,
-            help="Number of times to optimize the critic versus the generator."
+            help="Weight decay. Default 0.001."
         )
         parser.add_argument(
             "--num_epochs",
@@ -150,16 +115,6 @@ class Experiment:
             "--disable_wandb",
             action="store_true",
             help="Disable Weights and Biases logging."
-        )
-        parser.add_argument(
-            "--enable_early_stopping",
-            action="store_true",
-            help="Enable early stopping based on validation loss."
-        )
-        parser.add_argument(
-            "--use_QM9",
-            action="store_true",
-            help="Use the QM9 dataset from Ramakrishnan et al. (2014)."
         )
 
         self.args = parser.parse_args()

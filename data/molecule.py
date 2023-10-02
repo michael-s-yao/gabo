@@ -296,7 +296,10 @@ class SELFIESDataset(Dataset):
             The `idx`th molecule from the dataset.
         """
         molecule = sf.split_selfies(self.data[idx].decode('ASCII'))
-        return torch.tensor([self.vocab[tok] for tok in molecule])
+        molecule = [self.vocab[tok] for tok in molecule]
+        return torch.tensor(
+            [self.vocab[self.start]] + molecule + [self.vocab[self.stop]]
+        )
 
     def collate_fn(self, batch: Sequence[torch.Tensor]) -> torch.Tensor:
         """

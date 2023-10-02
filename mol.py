@@ -18,9 +18,8 @@ from lightning.pytorch.loggers import WandbLogger
 from typing import Dict, Union
 
 sys.path.append("MolOOD")
-from data.molecule import SELFIESDataModule, QM9DataModule
-from models.seqgan import MolGANModule
-from models.vae import SELFIESVAEModule
+from data.molecule import SELFIESDataModule
+from models.molgenerator import MolGeneratorModule
 from experiment.selfies_params import Experiment
 from experiment.utility import seed_everything, plot_config
 
@@ -55,56 +54,22 @@ def main():
 
     vocab = load_vocab(os.path.join(exp.datadir, "vocab.json"))
 
-    if exp.use_QM9:
-        datamodule = QM9DataModule(
-            batch_size=exp.batch_size,
-            num_workers=exp.num_workers,
-            seed=exp.seed
-        )
-        datamodule.prepare_data()
-        vocab = datamodule.vocab
-    else:
-        datamodule = SELFIESDataModule(
-            vocab=vocab,
-            root=exp.datadir,
-            batch_size=exp.batch_size,
-            num_workers=exp.num_workers,
-            seed=exp.seed
-        )
-    if exp.model.lower() == "molgan":
-        hidden_dims = [1_024] if exp.use_QM9 else [2_048, 4_096]
-        model = MolGANModule(
-            vocab,
-            architecture=exp.architecture,
-            max_molecule_length=datamodule.max_molecule_length,
-            alpha=exp.alpha,
-            regularization=exp.regularization,
-            lr_generator=exp.lr_generator,
-            lr_critic=exp.lr_critic,
-            clip=exp.clip,
-            beta1=beta1,
-            beta2=beta2,
-            n_critic_per_generator=exp.n_critic_per_generator,
-            hidden_dims=hidden_dims
-        )
-    elif exp.model.lower() == "vae":
-        model = SELFIESVAEModule(
-            in_dim=(
-                datamodule.max_molecule_length * len(datamodule.vocab.keys())
-            ),
-            out_dim=len(datamodule.vocab.keys()),
-            vocab=vocab,
-            alpha=exp.alpha,
-            KLD_alpha=exp.KLD_alpha,
-            regularization=exp.regularization,
-            lr=exp.lr,
-            clip=exp.clip,
-            beta1=beta1,
-            beta2=beta2,
-            n_critic_per_generator=exp.n_critic_per_generator
-        )
-    else:
-        raise NotImplementedError(f"Model type {exp.model} not implemented.")
+    datamodule = SELFIESDataModule(
+        vocab=vocab,
+        root=exp.datadir,
+        batch_size=exp.batch_size,
+        num_workers=exp.num_workers,
+        seed=exp.seed
+    )
+    model = MolGeneratorModule(
+        vocab,
+        max_molecule_length=datamodule.max_molecule_length,
+        alpha=exp.alpha,
+        lr=exp.lr,
+        optimizer=exp.optimizer,
+        beta=exp.beta,
+        weight_decay=exp.weight_decay
+    )
 
     meta = f"molecule_alpha={exp.alpha}"
     callbacks = [
@@ -114,19 +79,16 @@ def main():
             mode="min",
             filename=f"{meta}_{{epoch}}",
             save_last=True
+        ),
+        EarlyStopping(
+            monitor="val_loss",
+            min_delta=0.0,
+            patience=20,
+            verbose=False,
+            mode="min"
         )
     ]
     callbacks[0].CHECKPOINT_NAME_LAST = f"{meta}_{{epoch}}_last"
-    if exp.enable_early_stopping:
-        callbacks.append(
-            EarlyStopping(
-                monitor="val_loss",
-                min_delta=0.0,
-                patience=20,
-                verbose=False,
-                mode="min"
-            )
-        )
 
     logger = False
     if (

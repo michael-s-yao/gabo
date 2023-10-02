@@ -18,7 +18,7 @@ from pathlib import Path
 from tqdm import tqdm
 import torch
 import torch.nn.functional as F
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 sys.path.append(".")
 sys.path.append("MolOOD")
@@ -76,12 +76,6 @@ def build_args() -> argparse.Namespace:
         choices=metric_choices,
         default=metric_choices,
         help="Metric for molecule similarity. Default all metrics evaluated."
-    )
-    parser.add_argument(
-        "--percentile",
-        type=float,
-        default=0.95,
-        help="Perentile to report for oracle and learned_objective metrics."
     )
     parser.add_argument(
         "--seed", default=42, type=int, help="Random seed. Default 42."
@@ -350,10 +344,8 @@ def selfies_to_fingerprints(
 
 def source_all_metrics(
     partition: str = "train",
-    top_k: int = -1,
     vocab_path: Union[Path, str] = "./data/molecules/vocab.json",
     max_molecule_length: int = 109,
-    percentile: float = 0.95
 ) -> None:
     """
     Evaluates the `diversity`, `learned_objective`, and `oracle` metrics on
@@ -361,12 +353,8 @@ def source_all_metrics(
     Input:
         partition: the source dataset partition to evaluate the metrics on.
             One of [`train`, `test`]. Default `train`.
-        top_k: if specified, will restrict attention to only the top_k
-            performing molecules.
         vocab_path: file path to vocab dict.
         max_molecule_length: maximum molecule length. Default 109.
-        percentile: perentile to report for `oracle` and `learned_objective`
-            metrics.
     Returns:
         None. All metrics are printed to `stdout`.
     """
@@ -395,21 +383,49 @@ def source_all_metrics(
     print(f"{partition.title()} Dataset, N = {len(molecules)}")
 
     print(f"  Diversity: {len(set(molecules)) / len(molecules)}")
-    idx = min(max(percentile, 0.0), 1.0)
-    if top_k > 0:
-        idx = len(molecules) - round((1.0 - idx) * top_k)
-    else:
-        idx = round(idx * len(molecules))
-    network_idx = np.argsort(np.array(network))[idx]
+    S_network, S_oracle = S(network, oracle)
     print(
         "  Learned Objective (Higher is Better):",
-        f"{network[network_idx]} (Using Oracle: {oracle[network_idx]})"
+        f"{S_network} (Using Oracle: {S_oracle})"
     )
-    oracle_idx = np.argsort(np.array(oracle))[idx]
+    S_oracle, S_network = S(oracle, network)
     print(
         "  Oracle (Higher is Better):",
-        f"{oracle[oracle_idx]} (Using Network: {network[oracle_idx]})"
+        f"{S_oracle} (Using Network: {S_network})"
     )
+
+
+def S(
+    objective_scores: Sequence[float],
+    alternative_scores: Optional[Sequence[float]] = None
+) -> Union[float, Tuple[float]]:
+    """
+    Computes the benchmark score S as a combination of the top-1, top-10, and
+    top-100 objective scores as defined in Eq. (4) from Brown et al. (2019).
+    Inputs:
+        objective_scores: a list of molecule scores.
+        alternative_scores: a list of molecules scores according to some other
+            metric. Using the same top-1, top-10, and top-100 molecules
+            according to the `objective_scores` input, S is also computed
+            according to the alternative scores if provided.
+    Returns:
+        The corresponding benchmark score S.
+    Citation(s):
+        [1] Brown N, Fiscato M, Segler MHS, Vaucher AC. GuacaMol: Benchmarking
+            models for de novo molecular design. J Chem Inf Model 59(3):1096-
+            108. (2019). https://doi.org/10.1021/acs.jcim.8b00839
+    """
+    if not isinstance(objective_scores, np.ndarray):
+        objective_scores = np.array(objective_scores)
+    idxs = np.argsort(objective_scores)
+    top_k = lambda k: np.mean(objective_scores[idxs[k:]])
+    s = (top_k(1) + top_k(10) + top_k(100)) / 3.0
+    if alternative_scores is None:
+        return s
+    if not isinstance(alternative_scores, np.ndarray):
+        alternative_scores = np.array(alternative_scores)
+    top_k_alt = lambda k: np.mean(alternative_scores[idxs[k:]])
+    return s, (top_k_alt(1) + top_k_alt(10) + top_k_alt(100)) / 3.0
 
 
 def main():
@@ -444,48 +460,38 @@ def main():
             "  Generated Distribution:", len(set(xq_gen)) / args.num_molecules
         )
     if "learned_objective" in args.metric:
+        S_train_network, S_train_oracle = S(network_xp, oracle_xp)
+        S_test_network, S_test_oracle = S(network_xq_src, oracle_xq_src)
+        S_gen_network, S_gen_oracle = S(network_xq_gen, oracle_xq_gen)
         print("Metric: Learned Objective (Higher is Better)")
-        idx = round(min(max(args.percentile, 0.0), 1.0) * args.num_molecules)
-        if idx >= args.num_molecules:
-            idx = -1
-        xp_idx = np.argsort(np.array(network_xp))[idx]
         print(
             "  Training Distribution:",
-            f"{network_xp[xp_idx]} (Using Oracle: {oracle_xp[xp_idx]})"
+            f"{S_train_network} (Using Oracle: {S_train_oracle})"
         )
-        xq_src_idx = np.argsort(np.array(network_xq_src))[idx]
         print(
             "  Test Distribution:",
-            f"{network_xq_src[xq_src_idx]}",
-            f"(Using Oracle: {oracle_xq_src[xq_src_idx]})"
+            f"{S_test_network} (Using Oracle: {S_test_oracle})"
         )
-        xq_gen_idx = np.argsort(np.array(network_xq_gen))[idx]
         print(
             "  Generated Distribution:",
-            f"{network_xq_gen[xq_gen_idx]}",
-            f"(Using Oracle: {oracle_xq_gen[xq_gen_idx]})"
+            f"{S_gen_network} (Using Oracle: {S_gen_oracle})"
         )
     if "oracle" in args.metric:
+        S_train_oracle, S_train_network = S(oracle_xp, network_xp)
+        S_test_oracle, S_test_network = S(oracle_xq_src, network_xq_src)
+        S_gen_oracle, S_gen_network = S(oracle_xq_gen, network_xq_gen)
         print("Metric: Oracle (Higher is Better)")
-        idx = round(min(max(args.percentile, 0.0), 1.0) * args.num_molecules)
-        if idx >= args.num_molecules:
-            idx = -1
-        xp_idx = np.argsort(np.array(oracle_xp))[idx]
         print(
             "  Training Distribution:",
-            f"{oracle_xp[xp_idx]} (Using Network: {network_xp[xp_idx]})"
+            f"{S_train_oracle} (Using Network: {S_train_network})"
         )
-        xq_src_idx = np.argsort(np.array(oracle_xq_src))[idx]
         print(
             "  Test Distribution:",
-            f"{oracle_xq_src[xq_src_idx]}",
-            f"(Using Network: {network_xq_src[xq_src_idx]})"
+            f"{S_test_oracle} (Using Network: {S_test_network})"
         )
-        xq_gen_idx = np.argsort(np.array(oracle_xq_gen))[idx]
         print(
             "  Generated Distribution:",
-            f"{oracle_xq_gen[xq_gen_idx]}",
-            f"(Using Network: {network_xq_gen[xq_gen_idx]})"
+            f"{S_gen_oracle} (Using Network: {S_gen_network})"
         )
     if "fcd" in args.metric:
         fcd = FCD(device=get_device())

@@ -35,8 +35,6 @@ class RNN(nn.Module):
         device: Union[torch.device, str] = "cpu",
         padding_token: str = "[pad]",
         use_bidirectional: bool = False,
-        use_sigmoid: bool = False,
-        return_hidden: bool = True
     ):
         """
         Args:
@@ -50,8 +48,6 @@ class RNN(nn.Module):
             device: device to place the embedding weights on.
             padding_token: padding token in vocab. Default `[pad]`.
             use_bidirectional: whether to use a bidirectional RNN.
-            use_sigmoid: whether to apply sigmoid activation to model output.
-            return_hidden: whether to also return the final hidden state.
         """
         super().__init__()
 
@@ -64,11 +60,11 @@ class RNN(nn.Module):
         self.device = device
         self.num_layers = num_layers
         self.use_bidirectional = use_bidirectional
-        self.use_sigmoid = use_sigmoid
-        self.return_hidden = return_hidden
 
         self.embedding = nn.Embedding(
-            len(self.vocab.keys()), self.embedding_layer_size
+            len(self.vocab.keys()),
+            self.embedding_layer_size,
+            padding_idx=self.vocab[self.pad]
         )
         self.embedding.weight = nn.Parameter(self.embedding.weight.to(device))
         self.dropout = nn.Dropout(dropout)
@@ -150,6 +146,4 @@ class RNN(nn.Module):
             X, batch_first=True, padding_value=self.vocab[self.pad]
         )
         logits = self.linear(X) * torch.unsqueeze(X[..., 0] != 0, dim=-1)
-        if self.return_hidden:
-            return torch.sigmoid(logits) if self.use_sigmoid else logits, h
-        return torch.sigmoid(logits) if self.use_sigmoid else logits
+        return logits, h
