@@ -418,13 +418,13 @@ def S(
     if not isinstance(objective_scores, np.ndarray):
         objective_scores = np.array(objective_scores)
     idxs = np.argsort(objective_scores)
-    top_k = lambda k: np.mean(objective_scores[idxs[k:]])
+    top_k = lambda k: np.mean(objective_scores[idxs[k:]])  # noqa
     s = (top_k(1) + top_k(10) + top_k(100)) / 3.0
     if alternative_scores is None:
         return s
     if not isinstance(alternative_scores, np.ndarray):
         alternative_scores = np.array(alternative_scores)
-    top_k_alt = lambda k: np.mean(alternative_scores[idxs[k:]])
+    top_k_alt = lambda k: np.mean(alternative_scores[idxs[k:]])  # noqa
     return s, (top_k_alt(1) + top_k_alt(10) + top_k_alt(100)) / 3.0
 
 

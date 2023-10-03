@@ -123,25 +123,12 @@ def main():
             ckpt_path=exp.resume_from
         )
     if exp.mode in ("both", "test"):
-        try:
-            if exp.model.lower() == "molgan":
-                model = MolGANModule.load_from_checkpoint(
-                    exp.resume_from
-                )
-            elif exp.model.lower() == "vae":
-                model = SELFIESVAEModule.load_from_checkpoint(exp.resume_from)
-        except RuntimeError:
-            if exp.model.lower() == "molgan":
-                model = MolGANModule.load_from_checkpoint(
-                    exp.resume_from, map_location=torch.device("cpu")
-                )
-            elif exp.model.lower() == "vae":
-                model = SELFIESVAEModule.load_from_checkpoint(
-                    exp.resume_from, map_location=torch.device("cpu")
-                )
+        model = MolGeneratorModule.load_from_checkpoint(
+            exp.resume_from, map_location=torch.device("cpu")
+        )
         trainer.test(model, datamodule=datamodule)
 
 
 if __name__ == "__main__":
-    torch.set_float32_matmul_precision("medium")
+    # torch.set_float32_matmul_precision("medium")
     main()

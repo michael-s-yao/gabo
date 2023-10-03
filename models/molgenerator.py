@@ -24,6 +24,7 @@ class MolGeneratorModule(pl.LightningModule):
         dropout: float = 0.2,
         use_bidirectional: bool = False,
         start_token: str = "[start]",
+        stop_token: str = "[stop]",
         padding_token: str = "[pad]",
         lr: float = 0.001,
         optimizer: str = "Adam",
@@ -41,6 +42,7 @@ class MolGeneratorModule(pl.LightningModule):
             dropout: dropout parameter.
             use_bidirectional: whether to use a bidirectional RNN.
             start_token: start token in vocab. Default `[start]`.
+            stop_token: stop token in vocab. Default `[stop]`.
             padding_token: padding token in vocab. Default `[pad]`.
             lr: learning rate. Default 0.001.
             optimizer: optimizer algorithm. One of [`SGD`, `Adam`, `RMSProp`].
@@ -50,7 +52,8 @@ class MolGeneratorModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         if self.hparams.optimizer.title() != "Adam":
-            self.hparams.beta, _ = self.hparams.beta
+            if isinstance(self.hparams.beta, (tuple, list)):
+                self.hparams.beta, _ = self.hparams.beta
         self.hparams.alpha = min(max(alpha, 0.0), 1.0)
 
         self.model = RNN(
@@ -110,19 +113,30 @@ class MolGeneratorModule(pl.LightningModule):
         """
         B, N, _ = batch.size()
         tokens = one_hot_encodings_to_tokens(batch)
-        generated = torch.empty_like(tokens)
+        generated = torch.full_like(
+            tokens, self.hparams.vocab[self.hparams.padding_token]
+        )
         generated[:, 0] = torch.full(
             (B,), self.hparams.vocab[self.hparams.start_token]
         )
-        loss, hidden = 0.0, None
+        loss, hidden, count = 0.0, None, 0
+        finish = torch.zeros(B, dtype=torch.bool).to(self.device)
         for input_length in range(1, N):
             logits, hidden = self(batch[:, :input_length, :], hidden)
             logits = torch.squeeze(logits, dim=1)
             y = tokens[:, input_length]
             loss += self.loss(logits, y)
-            ypred = torch.argmax(F.softmax(logits, dim=-1), dim=-1)
+            ypred = torch.squeeze(
+                torch.multinomial(F.softmax(logits, dim=-1), 1),
+                dim=-1
+            )
             generated[:, input_length] = ypred
-        id_loss = loss / (N - 1)
+            stop_sampled = ypred == self.hparams.vocab[self.hparams.stop_token]
+            finish = torch.logical_or(finish, stop_sampled.data)
+            count += 1
+            if torch.all(finish):
+                break
+        id_loss = loss / count
         objective = torch.mean(self.objective(generated))
         train_loss = ((self.hparams.alpha - 1.0) * objective) + (
             self.hparams.alpha * id_loss
@@ -175,6 +189,34 @@ class MolGeneratorModule(pl.LightningModule):
             "val_objective": objective,
             "val_acc": val_acc
         }
+
+    def sample(self, n: int) -> Sequence[str]:
+        """
+        Samples n molecules using the generative model.
+        Input:
+            n: number of molecules to sample.
+        Returns:
+            A sequence of n molecules as SELFIES strings.
+        """
+        generated = torch.empty((
+            n,
+            self.hparams.max_molecule_length,
+            len(self.hparams.vocab.keys())
+        ))
+        generated = generated.to(self.device)
+        generated[:, 0, self.hparams.vocab[self.hparams.start_token]] = 1.0
+        hidden = None
+        with torch.no_grad():
+            for input_length in range(1, self.hparams.max_molecule_length):
+                logits, hidden = self(generated[:, :input_length, :], hidden)
+                logits = torch.squeeze(logits, dim=1)
+                idxs = torch.squeeze(
+                    torch.multinomial(F.softmax(logits, dim=-1), 1), dim=-1
+                )
+                generated[:, input_length, idxs] = 1.0
+        return tokens_to_selfies(
+            one_hot_encodings_to_tokens(generated), self.hparams.vocab
+        )
 
     def configure_optimizers(self) -> optim.Optimizer:
         """
