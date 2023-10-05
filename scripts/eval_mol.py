@@ -329,7 +329,9 @@ def selfies_to_fingerprints(
     """
     return [
         FingerprintMols.FingerprintMol(
-            Chem.MolFromSmiles(sf.decoder(mol)),
+            Chem.MolFromSmiles(
+                sf.decoder(mol.replace("[start]", "").replace("[stop]", ""))
+            ),
             minPath=1,
             maxPath=7,
             fpSize=2048,

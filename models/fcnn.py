@@ -8,7 +8,7 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch
 import torch.nn as nn
-from typing import Sequence
+from typing import Optional, Sequence
 
 from models.block import Block
 
@@ -19,7 +19,8 @@ class FCNN(nn.Module):
         in_dim: int,
         out_dim: int,
         hidden_dims: Sequence[int],
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        final_activation: Optional[str] = "Sigmoid"
     ):
         """
         Args:
@@ -27,11 +28,13 @@ class FCNN(nn.Module):
             out_dim: dimensions of mode output.
             hidden_dims: dimensions of the hidden intermediate layers.
             dropout: dropout. Default 0.1.
+            final_activation: final activation function. One of [`Sigmoid`,
+                `LeakyReLU`, None].
         """
         super().__init__()
         layers, dims = [], [in_dim] + hidden_dims + [out_dim]
         for i in range(len(dims) - 1):
-            func = "LeakyReLU" if i < len(dims) - 2 else "Sigmoid"
+            func = "LeakyReLU" if i < len(dims) - 2 else final_activation
             layers.append(
                 Block(dims[i], dims[i + 1], normalize=False, activation=func)
             )

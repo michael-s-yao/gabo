@@ -9,6 +9,7 @@ https://github.com/gianlucatruda/warfit-learn/tree/master
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
+from collections import defaultdict
 import json
 from math import isclose, isnan
 import numpy as np
@@ -19,7 +20,17 @@ from sklearn.linear_model import LinearRegression
 import torch
 from torch.utils.data import DataLoader, Dataset
 import lightning.pytorch as pl
-from typing import Any, Optional, Sequence, Tuple, Union
+from typing import NamedTuple, Optional, Sequence, Tuple, Union
+
+
+class PatientSample(NamedTuple):
+    X: torch.Tensor
+    X_attributes: Sequence[str]
+    target_dose: float
+    did_reach_stable_dose: bool
+    inr: float
+    target_inr: Optional[Union[float, str]]
+    cost: float
 
 
 class IWPCWarfarinDataModule(pl.LightningDataModule):
@@ -30,6 +41,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         cv_idx: Optional[int] = 0,
         batch_size: int = 128,
         num_workers: int = os.cpu_count() // 2,
+        label_smoothing: Optional[float] = 0.01,
         seed: int = 42
     ):
         """
@@ -40,6 +52,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
                 of the training and test splits, respectively.
             cv_idx: optional cross-validation index. Default 0.
             num_workers: number of workers. Default half the CPU count.
+            label_smoothing: optional label smoothing. Default 0.01.
             seed: random seed. Default 42.
         """
         super().__init__()
@@ -52,6 +65,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         self.cv_idx = cv_idx
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.label_smoothing = label_smoothing
         self.seed = seed
         self.rng = np.random.RandomState(seed=self.seed)
 
@@ -61,7 +75,8 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         self.gender = "Gender"
         self.CYP2C9 = "CYP2C9 consensus"
         self.VKORC1 = "Imputed VKORC1"
-        self.outcome = "Therapeutic Dose of Warfarin"
+        self.intervention = "Therapeutic Dose of Warfarin"
+        self.outcome = "INR on Reported Therapeutic Dose of Warfarin"
         self.rare_alleles = ["*1/*5", "*1/*6", "*1/*11", "*1/*13", "*1/*14"]
         self.other_IWPC_parameters_categorical = [
             "Age",
@@ -124,7 +139,9 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             race_keys=self.races,
             gender_keys=self.genders,
             model_h=None,
-            model_w=None
+            model_w=None,
+            label_smoothing=self.label_smoothing,
+            seed=self.seed
         )
         self.val = IWPCWarfarinDataset(
             data=self.dataset.iloc[self.val],
@@ -134,7 +151,8 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             race_keys=self.races,
             gender_keys=self.genders,
             model_h=self.train.model_h,
-            model_w=self.train.model_w
+            model_w=self.train.model_w,
+            label_smoothing=0.0
         )
 
         if stage is None or stage == "test":
@@ -146,7 +164,8 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
                 race_keys=self.races,
                 gender_keys=self.genders,
                 model_h=self.train.model_h,
-                model_w=self.train.model_w
+                model_w=self.train.model_w,
+                label_smoothing=0.0
             )
 
         return
@@ -191,6 +210,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         # Drop unuseable rows that are missing essential data points.
         self.dataset.dropna(
             subset=[
+                self.intervention,
                 self.outcome,
                 "Subject Reached Stable Dose of Warfarin",
                 self.CYP2C9
@@ -205,7 +225,9 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             self.dataset[self.CYP2C9].isna(), self.CYP2C9
         ] = "Unknown"
         # Exclude extreme warfarin doses.
-        self.dataset = self.dataset[self.dataset[self.outcome] < self.thresh]
+        self.dataset = self.dataset[
+            self.dataset[self.intervention] < self.thresh
+        ]
         # Convert the remaining categorical variables to one-hot encodings.
         self.dataset = pd.get_dummies(
             self.dataset, columns=self.other_IWPC_parameters_categorical
@@ -226,6 +248,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
+            collate_fn=self.collate_fn
         )
 
     def val_dataloader(self) -> Optional[DataLoader]:
@@ -242,7 +265,8 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             self.val,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.num_workers
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn
         )
 
     def test_dataloader(self) -> Optional[DataLoader]:
@@ -259,7 +283,37 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             self.test,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.num_workers
+            num_workers=self.num_workers,
+            collate_fn=self.collate_fn
+        )
+
+    def collate_fn(self, batch: Sequence[PatientSample]) -> PatientSample:
+        """
+        Defines a custom collate function.
+        Input:
+            batch: a sequence of patient samples to collate.
+        Returns:
+            The collated batch as a single PatientSample named tuple.
+        """
+        X, X_attributes = None, None
+        for item in batch:
+            if X is None:
+                X = torch.unsqueeze(item.X, dim=0)
+                X_attributes = item.X_attributes
+            else:
+                X = torch.cat((X, torch.unsqueeze(item.X, dim=0)), dim=0)
+        return PatientSample(
+            X,
+            np.concatenate(
+                (np.array(X_attributes)[np.newaxis, ...],) * len(batch), axis=0
+            ),
+            torch.tensor([item.target_dose for item in batch]).to(torch.float),
+            torch.tensor([item.did_reach_stable_dose for item in batch]).to(
+                torch.float
+            ),
+            torch.tensor([item.inr for item in batch]).to(torch.float),
+            [item.target_inr for item in batch],
+            torch.tensor([item.cost for item in batch]).to(torch.float)
         )
 
     def impute_VKORC1(self, datum: pd.Series) -> str:
@@ -366,7 +420,9 @@ class IWPCWarfarinDataset(Dataset):
         race_keys: str,
         gender_keys: str,
         model_h: Optional[LinearRegression] = None,
-        model_w: Optional[LinearRegression] = None
+        model_w: Optional[LinearRegression] = None,
+        label_smoothing: Optional[float] = 0.0,
+        seed: int = 42
     ):
         """
         Args:
@@ -384,6 +440,8 @@ class IWPCWarfarinDataset(Dataset):
             model_w: optional fitted linear regression model to use to perform
                 weight imputation. By default, the model is fitted on the
                 dataset.
+            label_smoothing: optional label smoothing parameter.
+            seed: random seed. Default 42.
         """
         super().__init__()
         self.data = data
@@ -392,6 +450,9 @@ class IWPCWarfarinDataset(Dataset):
         self.weight = weight_key
         self.races = race_keys
         self.genders = gender_keys
+        self.label_smoothing = label_smoothing
+        self.seed = seed
+        self.rng = np.random.RandomState(seed=self.seed)
 
         self.model_h, self.model_w = self._impute_heights_and_weights(
             model_h, model_w
@@ -407,23 +468,17 @@ class IWPCWarfarinDataset(Dataset):
         """
         return len(self.data)
 
-    def __getitem__(self, idx: int) -> Tuple[Any]:
+    def __getitem__(self, idx: int) -> PatientSample:
         """
         Retrieves a specified item from the dataset.
         Input:
             idx: the index of the element to retrieve.
         Returns:
-            pt: `idx`th patient from the dataset.
-            target_dose: therapeutic dose of warfarin.
-            outcome: whether or not the patient reached a stable dose of
-                warfarin.
-            inr: patient INR on their therapeutic dose of warfarin.
-            target_inr: estimated target INR range based on clinical
-                indication (if available).
+            A PatientSample named tuple.
         """
         pt = self.data.iloc[idx]
         target_dose = pt["Therapeutic Dose of Warfarin"]
-        outcome = pt["Subject Reached Stable Dose of Warfarin"]
+        did_reach_stable_dose = pt["Subject Reached Stable Dose of Warfarin"]
         inr = pt["INR on Reported Therapeutic Dose of Warfarin"]
         target_inr = pt["Estimated Target INR Range Based on Indication"]
         if not isinstance(target_inr, str) and isnan(target_inr):
@@ -431,19 +486,56 @@ class IWPCWarfarinDataset(Dataset):
             if isnan(target_inr):
                 target_inr = None
         pt = pt.drop([
-            "Therapeutic Dose of Warfarin",
             "Subject Reached Stable Dose of Warfarin",
             "INR on Reported Therapeutic Dose of Warfarin",
             "Estimated Target INR Range Based on Indication",
             "Target INR"
         ])
-        return (
-            torch.tensor(pt.astype(np.float32).to_numpy()),
+        pt = self._label_smoothing(pt.fillna(value=0)).astype(np.float32)
+        return PatientSample(
+            torch.tensor(pt.to_numpy()),
+            pt.index.to_list(),
             target_dose,
-            outcome,
+            did_reach_stable_dose,
             inr,
-            target_inr
+            target_inr,
+            IWPCWarfarinDataset.cost(inr, target_inr)
         )
+
+    @staticmethod
+    def cost(
+        inr: float,
+        target_inr: Optional[Union[float, str]] = None,
+        consensus_target_inr: float = 2.5
+    ) -> float:
+        """
+        Computes the cost incurred by the patient as a function of their INR.
+        Per Oden and Fahlen (2002), the risk of death is approximately a
+        quadratic function of INR. Therefore, we model the cost function as a
+        simple quadratic function valid up to a multiplicative constant.
+        Input:
+            inr: patient INR.
+            target_inr: optional patient target INR.
+            consensus_target_inr: if `target_inr` is None, then this target_inr
+                value is used as the patient's target INR.
+        Returns:
+            Cost incurred by the patient proportional to their risk of death.
+        Citation(s):
+            [1] Oden A and Fahlen M. Oral anticoagulation and risk of death: A
+                medical record linkage study. BMJ 325(7372):1073-5. (2002).
+                https://doi.org/10.1136%2Fbmj.325.7372.1073
+        """
+        if target_inr is None:
+            return (inr - consensus_target_inr) ** 2
+        elif isinstance(target_inr, float):
+            return (inr - target_inr) ** 2
+        elif isinstance(target_inr, str):
+            target_inr = target_inr.replace(" ", "")
+            low, high = target_inr.split("-")
+            target_inr = 0.5 * (float(low) + float(high))
+            return (inr - target_inr) ** 2
+        else:
+            raise ValueError(f"target_inr is invalid type {type(target_inr)}")
 
     def _impute_heights_and_weights(
         self,
@@ -497,3 +589,56 @@ class IWPCWarfarinDataset(Dataset):
         )
 
         return model_h, model_w
+
+    def _label_smoothing(self, patient: pd.Series) -> pd.Series:
+        """
+        Performs optional label_smoothing on one-hot encoded variables.
+        Input:
+            patient: an input patient dataset.
+        Returns:
+            The original patient dataset with label smoothing applied.
+        """
+        if self.label_smoothing == 0.0:
+            return patient
+        categories = [
+            "Acetaminophen",
+            "Simvastatin",
+            "Atorvastatin",
+            "Fluvastatin",
+            "Lovastatin",
+            "Pravastatin",
+            "Rosuvastatin",
+            "Cerivastatin",
+            "Sulfonamide Antibiotics",
+            "Macrolide Antibiotics",
+            "Race (OMB)",
+            "Gender",
+            "Age",
+            "Amiodarone",
+            "Carbamazepine",
+            "Phenytoin",
+            "Rifampin or Rifampicin",
+            "Current Smoker",
+            "CYP2C9 consensus",
+            "Imputed VKORC1"
+        ]
+        eps = self.rng.uniform(0, self.label_smoothing, size=len(categories))
+        num_classes = defaultdict(lambda: 0)
+        for label in patient.index:
+            for c in categories:
+                if label.startswith(c):
+                    num_classes[c] += 1
+                    break
+        for key, val in num_classes.items():
+            if val <= 1:
+                num_classes[key] = val + 1
+        for label in patient.index:
+            for c in categories:
+                if label.startswith(c):
+                    if int(patient[label]) > 0:
+                        patient[label] -= eps[categories.index(c)]
+                    else:
+                        k = num_classes[c]
+                        patient[label] += eps[categories.index(c)] / (k - 1)
+                    break
+        return patient

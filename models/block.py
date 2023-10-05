@@ -7,10 +7,14 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch.nn as nn
+from typing import Optional
 
 
 def Block(
-    in_dim: int, out_dim: int, normalize: bool, activation: str
+    in_dim: int,
+    out_dim: int,
+    normalize: bool,
+    activation: Optional[str] = None
 ) -> nn.Module:
     """
     Generates a layer of a network consisting of a linear transformation,
@@ -20,7 +24,7 @@ def Block(
         out_dim: number of output dimensions.
         normalize: whether to apply batch normalization.
         activation: activation function. One of [`LeakyReLU`, `Tanh`,
-            `Sigmoid`].
+            `Sigmoid`, None].
     Output:
         Layer consisting of a linear transformation, optional batch
             normalization, and activation.
@@ -30,7 +34,9 @@ def Block(
     if normalize:
         layer.append(nn.BatchNorm1d(out_dim))
 
-    if activation.lower() == "leakyrelu":
+    if activation is None:
+        pass
+    elif activation.lower() == "leakyrelu":
         layer.append(nn.LeakyReLU(negative_slope=0.2, inplace=False))
     elif activation.lower() == "tanh":
         layer.append(nn.Tanh())
