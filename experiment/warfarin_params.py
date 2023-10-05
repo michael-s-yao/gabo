@@ -48,9 +48,9 @@ class Experiment:
         )
         parser.add_argument(
             "--lr",
-            default=0.001,
+            default=0.002,
             type=float,
-            help="Learning rate. Default 0.001."
+            help="Learning rate. Default 0.002."
         )
         parser.add_argument(
             "--optimizer",
@@ -158,7 +158,7 @@ def build_warfarin_mortality_estimator_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--hidden_dims",
-        default=[256, 128, 64, 32],
+        default=[32],
         type=int,
         nargs="+",
         help="Hidden dimensions for intermediate layers of the FCNN model."
@@ -169,11 +169,10 @@ def build_warfarin_mortality_estimator_args() -> argparse.Namespace:
         type=str,
         help="Data directory. Default `./data/warfarin`."
     )
+    cv_idx_help = "Cross validation index. Default 0. "
+    cv_idx_help += "If -1, train and val sets will be combined for training."
     parser.add_argument(
-        "--cv_idx",
-        default=0,
-        type=int,
-        help="Cross validation index. Default 0."
+        "--cv_idx", default=0, type=int, help=cv_idx_help
     )
     parser.add_argument(
         "--lr",
@@ -190,9 +189,9 @@ def build_warfarin_mortality_estimator_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--lr_gamma",
-        default=0.1,
+        default=0.5,
         type=float,
-        help="Learning rate decay rate at specified milestones. Default 0.1."
+        help="Learning rate decay rate at specified milestones. Default 0.5."
     )
     parser.add_argument(
         "--optimizer",
@@ -247,9 +246,9 @@ def build_warfarin_mortality_estimator_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--batch_size",
-        default=32,
+        default=16,
         type=int,
-        help="Batch size. Default 128."
+        help="Batch size. Default 16."
     )
     parser.add_argument(
         "--seed", default=42, type=int, help="Random seed. Default 42."

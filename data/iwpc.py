@@ -115,7 +115,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             None.
         """
         val_frac = 0.125
-        if self.cv_idx >= 1.0 / val_frac or self.cv_idx < 0:
+        if self.cv_idx >= 1.0 / val_frac or self.cv_idx < -1:
             raise ValueError(f"Invalid cross validation index {self.cv_idx}.")
         self.num_train = round(self.train_frac * self.num_samples)
         self.num_test = self.num_samples - self.num_train
@@ -129,6 +129,9 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             self.rows[:start_val],
             self.rows[end_val:(self.num_train + self.num_val)]
         ))
+        if self.cv_idx == -1:
+            self.train = np.concatenate((self.train, self.val))
+            self.val = self.train
         self.test = self.rows[(self.num_train + self.num_val):]
 
         self.train = IWPCWarfarinDataset(

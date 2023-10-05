@@ -8,16 +8,75 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import sys
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.stats import kstest
+from pathlib import Path
 import torch
 import lightning.pytorch as pl
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.loggers import WandbLogger
+from typing import Optional, Sequence, Union
 
 sys.path.append(".")
-from data.iwpc import IWPCWarfarinDataModule
+from data.iwpc import IWPCWarfarinDataModule, IWPCWarfarinDataset
 from models.mortality_estimator import WarfarinMortalityLightningModule
 from experiment.warfarin_params import build_warfarin_mortality_estimator_args
-from experiment.utility import seed_everything
+from experiment.utility import seed_everything, plot_config
+
+
+def plot_test_results(
+    ckpt: Union[Path, str],
+    savepath: Optional[Union[Path, str]] = None,
+    seed: int = 42
+) -> None:
+    plot_config(fontsize=18)
+    device = torch.device("cpu")
+
+    datamodule = IWPCWarfarinDataModule(
+        root="./data/warfarin",
+        train_test_split=(0.8, 0.2),
+        cv_idx=-1,
+        seed=seed
+    )
+    datamodule.prepare_data()
+    datamodule.setup()
+
+    model = WarfarinMortalityLightningModule.load_from_checkpoint(
+        ckpt, map_device=device
+    )
+    model = model.to(device)
+
+    plt.figure(figsize=(10, 6))
+    train, test = None, None
+    for dataset, label in zip(
+        [datamodule.train, datamodule.test], ["Train Dataset", "Test Dataset"]
+    ):
+        vals = [pt.cost - model(pt.X.to(device)).item() for pt in dataset]
+        if label == "Train Dataset":
+            train = vals
+        else:
+            test = vals
+        plt.hist(
+            vals,
+            label=(label + rf" ($N = {len(dataset)}$)"),
+            density=True,
+            alpha=0.5,
+            bins=np.linspace(-1, 1, 100),
+            ec="black"
+        )
+    plt.legend()
+    plt.xlabel("True Cost - Predicted Cost")
+    plt.ylabel("Density")
+    if savepath is None:
+        plt.show()
+    else:
+        plt.savefig(savepath, dpi=600, bbox_inches="tight", transparent=True)
+    plt.close()
+    p, N = 0.0, 100
+    for _ in range(N):
+        p += kstest(test, train, method='exact').pvalue / N
+    print(f"p = {p:.5f} (Kolmogorov-Smirnov Test)")
 
 
 def main():
@@ -65,10 +124,12 @@ def main():
     ]
 
     logger = False
-    if not args.fast_dev_run and not args.mode == "test":
-        logger = CSVLogger(
-            save_dir="./",
-        )
+    if (
+        not args.fast_dev_run and
+        not args.mode == "test" and
+        not args.disable_wandb
+    ):
+        logger = WandbLogger(project="WarfarinCostEstimator", log_model="all")
         logger.log_hyperparams(args)
 
     trainer = pl.Trainer(
@@ -95,4 +156,10 @@ def main():
 
 
 if __name__ == "__main__":
+    reproduce_warfarin_cost_estimator_graph = False
+    if reproduce_warfarin_cost_estimator_graph:
+        plot_test_results(
+            ckpt="./ckpts/warfarin_cost_estimator.ckpt",
+            savepath="./docs/warfarin_cost_estimator.png"
+        )
     main()
