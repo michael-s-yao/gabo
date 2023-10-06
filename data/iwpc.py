@@ -20,12 +20,15 @@ from sklearn.linear_model import LinearRegression
 import torch
 from torch.utils.data import DataLoader, Dataset
 import lightning.pytorch as pl
-from typing import NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Dict, NamedTuple, Optional, Sequence, Tuple, Union
+
+from data.iwpc_transform import TGANContinuousDataTransform
 
 
 class PatientSample(NamedTuple):
     X: torch.Tensor
     X_attributes: Sequence[str]
+    cond_mask: torch.Tensor
     target_dose: float
     did_reach_stable_dose: bool
     inr: float
@@ -80,6 +83,15 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         self.rare_alleles = ["*1/*5", "*1/*6", "*1/*11", "*1/*13", "*1/*14"]
         self.other_IWPC_parameters_categorical = [
             "Age",
+            "Acetaminophen or Paracetamol (Tylenol)",
+            "Simvastatin (Zocor)",
+            "Atorvastatin (Lipitor)",
+            "Fluvastatin (Lescol)",
+            "Lovastatin (Mevacor)",
+            "Pravastatin (Pravachol)",
+            "Rosuvastatin (Crestor)",
+            "Sulfonamide Antibiotics",
+            "Macrolide Antibiotics",
             "Amiodarone (Cordarone)",
             "Carbamazepine (Tegretol)",
             "Phenytoin (Dilantin)",
@@ -143,6 +155,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             gender_keys=self.genders,
             model_h=None,
             model_w=None,
+            transform=None,
             label_smoothing=self.label_smoothing,
             seed=self.seed
         )
@@ -155,6 +168,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             gender_keys=self.genders,
             model_h=self.train.model_h,
             model_w=self.train.model_w,
+            transform=self.train.transform,
             label_smoothing=0.0
         )
 
@@ -168,6 +182,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
                 gender_keys=self.genders,
                 model_h=self.train.model_h,
                 model_w=self.train.model_w,
+                transform=self.train.transform,
                 label_smoothing=0.0
             )
 
@@ -231,6 +246,14 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         self.dataset = self.dataset[
             self.dataset[self.intervention] < self.thresh
         ]
+        # Replace the remaining NaN values with 0.
+        cols = self.columns
+        cols.remove(self.height)
+        cols.remove(self.weight)
+        zero_mask = pd.DataFrame(
+            np.zeros((len(self.dataset), len(cols))), columns=cols
+        )
+        self.dataset = self.dataset.fillna(zero_mask)
         # Convert the remaining categorical variables to one-hot encodings.
         self.dataset = pd.get_dummies(
             self.dataset, columns=self.other_IWPC_parameters_categorical
@@ -298,18 +321,21 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         Returns:
             The collated batch as a single PatientSample named tuple.
         """
-        X, X_attributes = None, None
+        X, X_attributes, cond_mask = None, None, None
         for item in batch:
             if X is None:
                 X = torch.unsqueeze(item.X, dim=0)
                 X_attributes = item.X_attributes
+                cond_mask = torch.unsqueeze(item.cond_mask, dim=0)
             else:
                 X = torch.cat((X, torch.unsqueeze(item.X, dim=0)), dim=0)
+                cond_mask = torch.cat(
+                    (cond_mask, torch.unsqueeze(item.cond_mask, dim=0)), dim=0
+                )
         return PatientSample(
             X,
-            np.concatenate(
-                (np.array(X_attributes)[np.newaxis, ...],) * len(batch), axis=0
-            ),
+            X_attributes,
+            cond_mask,
             torch.tensor([item.target_dose for item in batch]).to(torch.float),
             torch.tensor([item.did_reach_stable_dose for item in batch]).to(
                 torch.float
@@ -392,7 +418,6 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             "Lovastatin (Mevacor)",
             "Pravastatin (Pravachol)",
             "Rosuvastatin (Crestor)",
-            "Cerivastatin (Baycol)",
             "Amiodarone (Cordarone)",
             "Carbamazepine (Tegretol)",
             "Phenytoin (Dilantin)",
@@ -424,6 +449,7 @@ class IWPCWarfarinDataset(Dataset):
         gender_keys: str,
         model_h: Optional[LinearRegression] = None,
         model_w: Optional[LinearRegression] = None,
+        transform: Optional[TGANContinuousDataTransform] = None,
         label_smoothing: Optional[float] = 0.0,
         seed: int = 42
     ):
@@ -443,6 +469,9 @@ class IWPCWarfarinDataset(Dataset):
             model_w: optional fitted linear regression model to use to perform
                 weight imputation. By default, the model is fitted on the
                 dataset.
+            transform: optional fitted continuous data transform to use to
+                transform height and weight continuous variables. By default,
+                the transform is fitted on the dataset.
             label_smoothing: optional label smoothing parameter.
             seed: random seed. Default 42.
         """
@@ -457,9 +486,21 @@ class IWPCWarfarinDataset(Dataset):
         self.seed = seed
         self.rng = np.random.RandomState(seed=self.seed)
 
+        self.target_dose = "Therapeutic Dose of Warfarin"
+        self.did_reach_stable_dose = "Subject Reached Stable Dose of Warfarin"
+        self.inr = "INR on Reported Therapeutic Dose of Warfarin"
+        self.est_target_inr = "Estimated Target INR Range Based on Indication"
+        self.target_inr = "Target INR"
+
         self.model_h, self.model_w = self._impute_heights_and_weights(
             model_h, model_w
         )
+        if transform is not None:
+            self.transform = transform
+        else:
+            self.transform = TGANContinuousDataTransform()
+            self.transform.fit(self.data, ["Height (cm)", "Weight (kg)"])
+        self.data = self.transform(self.data)
 
     def __len__(self) -> int:
         """
@@ -479,31 +520,81 @@ class IWPCWarfarinDataset(Dataset):
         Returns:
             A PatientSample named tuple.
         """
+        condition = self.rng.choice(self.discrete_attributes)
+        values = self._discrete_attribute_values()
+        counts = defaultdict(lambda: [])
+        for idx in range(len(self.data)):
+            for cond in values[condition]:
+                if self.data.iloc[idx][cond]:
+                    counts[cond].append(idx)
+        freqs = list(
+            map(lambda cond: len(counts[cond]), sorted(values[condition]))
+        )
+        condition_val = self.rng.choice(
+            values[condition], p=[f / sum(freqs) for f in freqs]
+        )
+        mask = {key: [0] * len(values[key]) for key in values.keys()}
+        mask[condition][values[condition].index(condition_val)] = 1
+        mask = sum([mask[k] for k in sorted(mask.keys())], [])
+        idx = self.rng.choice(counts[condition_val])
+
         pt = self.data.iloc[idx]
-        target_dose = pt["Therapeutic Dose of Warfarin"]
-        did_reach_stable_dose = pt["Subject Reached Stable Dose of Warfarin"]
-        inr = pt["INR on Reported Therapeutic Dose of Warfarin"]
-        target_inr = pt["Estimated Target INR Range Based on Indication"]
+        target_dose = pt[self.target_dose]
+        did_reach_stable_dose = pt[self.did_reach_stable_dose]
+        inr = pt[self.inr]
+        target_inr = pt[self.est_target_inr]
         if not isinstance(target_inr, str) and isnan(target_inr):
             target_inr = pt["Target INR"]
             if isnan(target_inr):
                 target_inr = None
         pt = pt.drop([
-            "Subject Reached Stable Dose of Warfarin",
-            "INR on Reported Therapeutic Dose of Warfarin",
-            "Estimated Target INR Range Based on Indication",
-            "Target INR"
+            self.did_reach_stable_dose,
+            self.inr,
+            self.est_target_inr,
+            self.target_inr
         ])
-        pt = self._label_smoothing(pt.fillna(value=0)).astype(np.float32)
+        pt = self._label_smoothing(pt).astype(np.float32)
+        # Construct the row vector.
+        r, r_attr = [pt[self.target_dose]], [self.target_dose]
+        for continuous in [self.height, self.weight]:
+            attr = [c for c in self.data.columns if c.startswith(continuous)]
+            r_attr += attr
+            r += pt[attr].tolist()
+        for discrete in self.discrete_attributes:
+            attr = [c for c in self.data.columns if c.startswith(discrete)]
+            r_attr += attr
+            r += pt[attr].tolist()
         return PatientSample(
-            torch.tensor(pt.to_numpy()),
-            pt.index.to_list(),
+            torch.tensor(r),
+            r_attr,
+            torch.tensor(mask),
             target_dose,
             did_reach_stable_dose,
             inr,
             target_inr,
             IWPCWarfarinDataset.cost(inr, target_inr)
         )
+
+    @property
+    def discrete_attributes(self) -> Sequence[str]:
+        return sorted(list(self._discrete_attribute_values().keys()))
+
+    def _discrete_attribute_values(self) -> Dict[str, Sequence[int]]:
+        vals = defaultdict(lambda: [])
+        removed_prefixes = [
+            self.height,
+            self.weight,
+            self.target_dose,
+            self.inr,
+            self.target_inr,
+            self.est_target_inr,
+            self.did_reach_stable_dose
+        ]
+        for column in self.data.columns:
+            if any([column.startswith(prefix) for prefix in removed_prefixes]):
+                continue
+            vals[column.split("_")[0]].append(column)
+        return {key: lst for key, lst in vals.items() if len(lst) > 1}
 
     @staticmethod
     def cost(

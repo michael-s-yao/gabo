@@ -48,7 +48,7 @@ class Experiment:
         )
         parser.add_argument(
             "--lr",
-            default=0.002,
+            default=0.0002,
             type=float,
             help="Learning rate. Default 0.002."
         )
@@ -68,15 +68,15 @@ class Experiment:
         )
         parser.add_argument(
             "--weight_decay",
-            default=0.001,
+            default=1e-6,
             type=float,
-            help="Weight decay. Default 0.001."
+            help="Weight decay. Default 1e-6."
         )
         parser.add_argument(
             "--label_smoothing",
-            default=0.01,
+            default=0.0,
             type=float,
-            help="Label smoothing. Default 0.01."
+            help="Label smoothing. Default 0."
         )
         parser.add_argument(
             "--num_epochs",

@@ -26,7 +26,6 @@ import gzip
 from pathlib import Path
 import selfies as sf
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import lightning.pytorch as pl
 from typing import Dict, Optional, Sequence, Union

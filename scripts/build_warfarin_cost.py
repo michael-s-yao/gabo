@@ -16,10 +16,10 @@ import torch
 import lightning.pytorch as pl
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
-from typing import Optional, Sequence, Union
+from typing import Optional, Union
 
 sys.path.append(".")
-from data.iwpc import IWPCWarfarinDataModule, IWPCWarfarinDataset
+from data.iwpc import IWPCWarfarinDataModule
 from models.mortality_estimator import WarfarinMortalityLightningModule
 from experiment.warfarin_params import build_warfarin_mortality_estimator_args
 from experiment.utility import seed_everything, plot_config
@@ -96,7 +96,7 @@ def main():
     datamodule.setup()
 
     model = WarfarinMortalityLightningModule(
-        in_dim=datamodule.train[0].X.size(dim=0),
+        in_dim=datamodule.train[0].X.size(dim=-1),
         hidden_dims=args.hidden_dims,
         dropout=args.dropout,
         lr=args.lr,

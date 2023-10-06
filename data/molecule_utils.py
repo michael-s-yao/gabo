@@ -7,6 +7,7 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch
+import torch.nn.functional as F
 from typing import Dict, Optional, Sequence
 
 
