@@ -502,6 +502,14 @@ class IWPCWarfarinDataset(Dataset):
             self.transform.fit(self.data, ["Height (cm)", "Weight (kg)"])
         self.data = self.transform(self.data)
 
+        self.values = self._discrete_attribute_values()
+        self.cache = defaultdict(lambda: [])
+        for condition in self.discrete_attributes:
+            for idx in range(len(self.data)):
+                for cond in self.values[condition]:
+                    if self.data.iloc[idx][cond]:
+                        self.cache[cond].append(idx)
+
     def __len__(self) -> int:
         """
         Returns the length of the dataset.
@@ -521,22 +529,17 @@ class IWPCWarfarinDataset(Dataset):
             A PatientSample named tuple.
         """
         condition = self.rng.choice(self.discrete_attributes)
-        values = self._discrete_attribute_values()
-        counts = defaultdict(lambda: [])
-        for idx in range(len(self.data)):
-            for cond in values[condition]:
-                if self.data.iloc[idx][cond]:
-                    counts[cond].append(idx)
-        freqs = list(
-            map(lambda cond: len(counts[cond]), sorted(values[condition]))
+        freqs = map(
+            lambda cond: len(self.cache[cond]), sorted(self.values[condition])
         )
+        freqs = list(freqs)
         condition_val = self.rng.choice(
-            values[condition], p=[f / sum(freqs) for f in freqs]
+            self.values[condition], p=[f / sum(freqs) for f in freqs]
         )
-        mask = {key: [0] * len(values[key]) for key in values.keys()}
-        mask[condition][values[condition].index(condition_val)] = 1
+        mask = {key: [0] * len(self.values[key]) for key in self.values.keys()}
+        mask[condition][self.values[condition].index(condition_val)] = 1
         mask = sum([mask[k] for k in sorted(mask.keys())], [])
-        idx = self.rng.choice(counts[condition_val])
+        idx = self.rng.choice(self.cache[condition_val])
 
         pt = self.data.iloc[idx]
         target_dose = pt[self.target_dose]

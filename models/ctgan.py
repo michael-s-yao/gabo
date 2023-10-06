@@ -284,6 +284,7 @@ class CTGANLightningModule(pl.LightningModule):
                 generator_loss = -self.hparams.alpha * torch.log(
                     torch.sigmoid(self.critic(generated))
                 )
+            self.cost.model.zero_grad()
             cost = (1.0 - self.hparams.alpha) * torch.mean(
                 self.cost(generated)
             )
