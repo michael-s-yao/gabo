@@ -158,7 +158,7 @@ def build_warfarin_mortality_estimator_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--hidden_dims",
-        default=[32],
+        default=[64, 64, 64, 64],
         type=int,
         nargs="+",
         help="Hidden dimensions for intermediate layers of the FCNN model."

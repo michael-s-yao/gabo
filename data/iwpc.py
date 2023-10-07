@@ -28,7 +28,7 @@ from data.iwpc_transform import TGANContinuousDataTransform
 class PatientSample(NamedTuple):
     X: torch.Tensor
     X_attributes: Sequence[str]
-    cond_mask: torch.Tensor
+    cond_mask: Optional[torch.Tensor]
     target_dose: float
     did_reach_stable_dose: bool
     inr: float
@@ -45,7 +45,8 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         batch_size: int = 128,
         num_workers: int = os.cpu_count() // 2,
         label_smoothing: Optional[float] = 0.01,
-        seed: int = 42
+        seed: int = 42,
+        training_by_sampling: bool = True
     ):
         """
         Args:
@@ -57,6 +58,8 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             num_workers: number of workers. Default half the CPU count.
             label_smoothing: optional label smoothing. Default 0.01.
             seed: random seed. Default 42.
+            training_by_sampling: whether to use the training by sampling
+                method from Xu et al. (2019).
         """
         super().__init__()
         self.root = root
@@ -71,6 +74,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         self.label_smoothing = label_smoothing
         self.seed = seed
         self.rng = np.random.RandomState(seed=self.seed)
+        self.training_by_sampling = training_by_sampling
 
         self.height = "Height (cm)"
         self.weight = "Weight (kg)"
@@ -157,8 +161,10 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             model_w=None,
             transform=None,
             label_smoothing=self.label_smoothing,
-            seed=self.seed
+            seed=self.seed,
+            training_by_sampling=self.training_by_sampling
         )
+        self.invert = self.train.invert
         self.val = IWPCWarfarinDataset(
             data=self.dataset.iloc[self.val],
             columns=self.columns,
@@ -169,7 +175,8 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             model_h=self.train.model_h,
             model_w=self.train.model_w,
             transform=self.train.transform,
-            label_smoothing=0.0
+            label_smoothing=0.0,
+            training_by_sampling=self.training_by_sampling
         )
 
         if stage is None or stage == "test":
@@ -183,7 +190,8 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
                 model_h=self.train.model_h,
                 model_w=self.train.model_w,
                 transform=self.train.transform,
-                label_smoothing=0.0
+                label_smoothing=0.0,
+                training_by_sampling=self.training_by_sampling
             )
 
         return
@@ -451,7 +459,8 @@ class IWPCWarfarinDataset(Dataset):
         model_w: Optional[LinearRegression] = None,
         transform: Optional[TGANContinuousDataTransform] = None,
         label_smoothing: Optional[float] = 0.0,
-        seed: int = 42
+        seed: int = 42,
+        training_by_sampling: bool = True
     ):
         """
         Args:
@@ -474,6 +483,8 @@ class IWPCWarfarinDataset(Dataset):
                 the transform is fitted on the dataset.
             label_smoothing: optional label smoothing parameter.
             seed: random seed. Default 42.
+            training_by_sampling: whether to use the training by sampling
+                method from Xu et al. (2019).
         """
         super().__init__()
         self.data = data
@@ -485,6 +496,7 @@ class IWPCWarfarinDataset(Dataset):
         self.label_smoothing = label_smoothing
         self.seed = seed
         self.rng = np.random.RandomState(seed=self.seed)
+        self.training_by_sampling = training_by_sampling
 
         self.target_dose = "Therapeutic Dose of Warfarin"
         self.did_reach_stable_dose = "Subject Reached Stable Dose of Warfarin"
@@ -501,14 +513,16 @@ class IWPCWarfarinDataset(Dataset):
             self.transform = TGANContinuousDataTransform()
             self.transform.fit(self.data, ["Height (cm)", "Weight (kg)"])
         self.data = self.transform(self.data)
+        self.invert = self.transform.invert
 
-        self.values = self._discrete_attribute_values()
-        self.cache = defaultdict(lambda: [])
-        for condition in self.discrete_attributes:
-            for idx in range(len(self.data)):
-                for cond in self.values[condition]:
-                    if self.data.iloc[idx][cond]:
-                        self.cache[cond].append(idx)
+        if self.training_by_sampling:
+            self.values = self._discrete_attribute_values()
+            self.cache = defaultdict(lambda: [])
+            for condition in self.discrete_attributes:
+                for idx in range(len(self.data)):
+                    for cond in self.values[condition]:
+                        if self.data.iloc[idx][cond]:
+                            self.cache[cond].append(idx)
 
     def __len__(self) -> int:
         """
@@ -528,18 +542,25 @@ class IWPCWarfarinDataset(Dataset):
         Returns:
             A PatientSample named tuple.
         """
-        condition = self.rng.choice(self.discrete_attributes)
-        freqs = map(
-            lambda cond: len(self.cache[cond]), sorted(self.values[condition])
-        )
-        freqs = list(freqs)
-        condition_val = self.rng.choice(
-            self.values[condition], p=[f / sum(freqs) for f in freqs]
-        )
-        mask = {key: [0] * len(self.values[key]) for key in self.values.keys()}
-        mask[condition][self.values[condition].index(condition_val)] = 1
-        mask = sum([mask[k] for k in sorted(mask.keys())], [])
-        idx = self.rng.choice(self.cache[condition_val])
+        if self.training_by_sampling:
+            condition = self.rng.choice(self.discrete_attributes)
+            freqs = map(
+                lambda cond: len(self.cache[cond]),
+                sorted(self.values[condition])
+            )
+            freqs = list(freqs)
+            condition_val = self.rng.choice(
+                self.values[condition], p=[f / sum(freqs) for f in freqs]
+            )
+            mask = {
+                key: [0] * len(self.values[key])
+                for key in self.values.keys()
+            }
+            mask[condition][self.values[condition].index(condition_val)] = 1
+            mask = sum([mask[k] for k in sorted(mask.keys())], [])
+            idx = self.rng.choice(self.cache[condition_val])
+        else:
+            mask = 0.0
 
         pt = self.data.iloc[idx]
         target_dose = pt[self.target_dose]
@@ -622,17 +643,14 @@ class IWPCWarfarinDataset(Dataset):
                 medical record linkage study. BMJ 325(7372):1073-5. (2002).
                 https://doi.org/10.1136%2Fbmj.325.7372.1073
         """
-        if target_inr is None:
-            return (inr - consensus_target_inr) ** 2
-        elif isinstance(target_inr, float):
-            return (inr - target_inr) ** 2
+        if target_inr is None or target_inr == 0.0:
+            target_inr = consensus_target_inr
         elif isinstance(target_inr, str):
-            target_inr = target_inr.replace(" ", "")
-            low, high = target_inr.split("-")
+            low, high = target_inr.replace(" ", "").split("-")
             target_inr = 0.5 * (float(low) + float(high))
-            return (inr - target_inr) ** 2
-        else:
+        elif not isinstance(target_inr, float):
             raise ValueError(f"target_inr is invalid type {type(target_inr)}")
+        return (inr - target_inr) ** 2
 
     def _impute_heights_and_weights(
         self,

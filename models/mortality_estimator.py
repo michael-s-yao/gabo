@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import lightning.pytorch as pl
-from typing import Any, Dict, Sequence, Union
+from typing import Any, Callable, Dict, Sequence, Union
 
 from models.fcnn import FCNN
 
@@ -20,6 +20,7 @@ class WarfarinMortalityLightningModule(pl.LightningModule):
         self,
         in_dim: int,
         hidden_dims: Sequence[int],
+        invert_continuous_transform: Callable[[torch.Tensor], torch.Tensor],
         dropout: float = 0.1,
         lr: float = 0.001,
         lr_milestones: Sequence[int] = [20, 40],
@@ -32,6 +33,8 @@ class WarfarinMortalityLightningModule(pl.LightningModule):
         Args:
             in_dim: dimensions of input data.
             hidden_dims: dimensions of the hidden intermediate layers.
+            invert_continuous_transform: a function to invert the original
+                BayesianGMM transforms.
             dropout: dropout. Default 0.1.
             lr: learning rate. Default 0.001.
             lr_milestones: milestones for LR scheduler. Default [20, 40].
@@ -61,7 +64,7 @@ class WarfarinMortalityLightningModule(pl.LightningModule):
         Returns:
             Estimated patient costs as predicted by the model.
         """
-        return torch.squeeze(self.model(patient), dim=-1)
+        return torch.square(torch.squeeze(self.model(patient), dim=-1))
 
     def training_step(
         self, batch: torch.Tensor, batch_idx: int
@@ -74,7 +77,10 @@ class WarfarinMortalityLightningModule(pl.LightningModule):
         Returns:
             train_loss: training loss.
         """
-        train_loss = self.loss(self(batch.X), batch.cost)
+        raw = self.hparams.invert_continuous_transform(
+            batch.X, batch.X_attributes
+        )
+        train_loss = self.loss(self(raw), batch.cost)
         self.log(
             "train_loss",
             train_loss,
@@ -95,7 +101,10 @@ class WarfarinMortalityLightningModule(pl.LightningModule):
         Returns:
             val_loss: validation loss.
         """
-        val_loss = self.loss(self(batch.X), batch.cost)
+        raw = self.hparams.invert_continuous_transform(
+            batch.X, batch.X_attributes
+        )
+        val_loss = self.loss(self(raw), batch.cost)
         self.log(
             "val_loss",
             val_loss,

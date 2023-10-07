@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import lightning.pytorch as pl
-from typing import Sequence, Union
+from typing import Callable, Sequence, Union
 
 from data.iwpc import PatientSample
 from models.fcnn import FCNN
@@ -168,6 +168,7 @@ class CTGANLightningModule(pl.LightningModule):
         patient_vector_dim: int,
         condition_mask_dim: int,
         alpha: float,
+        invert_continuous_transform: Callable[[torch.Tensor], torch.Tensor],
         lambda_: float = 10,
         embedding_dim: int = 64,
         generator_dims: Sequence[int] = [256, 256],
@@ -186,6 +187,8 @@ class CTGANLightningModule(pl.LightningModule):
             patient_vector_dim: length of the patient input vector.
             condition_mask_dim: length of the condition mask.
             alpha: source critic regularization weighting term.
+            invert_continuous_transform: a function to invert the original
+                BayesianGMM transforms.
             lambda_: source critic gradient penalty weighting term. Default 10.
             embedding_dim: size of the random sample inputs to the generator.
             generator_dims: size of the output samples for each of the Residual
@@ -285,8 +288,11 @@ class CTGANLightningModule(pl.LightningModule):
                     torch.sigmoid(self.critic(generated))
                 )
             self.cost.model.zero_grad()
+            raw_generated = self.hparams.invert_continuous_transform(
+                generated, batch.X_attributes
+            )
             cost = (1.0 - self.hparams.alpha) * torch.mean(
-                self.cost(generated)
+                self.cost(raw_generated)
             )
             generator_penalty = self._generator_penalty(
                 batch.X, generated, batch.X_attributes

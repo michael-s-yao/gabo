@@ -39,6 +39,7 @@ def main():
     model = CTGANLightningModule(
         patient_vector_dim=patient_vector_dim,
         condition_mask_dim=condition_mask_dim,
+        invert_continuous_transform=datamodule.invert,
         alpha=exp.alpha,
         embedding_dim=64,
         generator_dims=[256, 256],

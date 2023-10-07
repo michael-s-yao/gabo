@@ -37,7 +37,8 @@ def plot_test_results(
         root="./data/warfarin",
         train_test_split=(0.8, 0.2),
         cv_idx=-1,
-        seed=seed
+        seed=seed,
+        training_by_sampling=False
     )
     datamodule.prepare_data()
     datamodule.setup()
@@ -52,7 +53,9 @@ def plot_test_results(
     for dataset, label in zip(
         [datamodule.train, datamodule.test], ["Train Dataset", "Test Dataset"]
     ):
-        vals = [pt.cost - model(pt.X.to(device)).item() for pt in dataset]
+        gts = np.array([pt.cost for pt in dataset])
+        preds = np.array([model(pt.X.to(device)).item() for pt in dataset])
+        vals = (preds - gts) / ((preds + gts) / 2.0)
         if label == "Train Dataset":
             train = vals
         else:
@@ -90,14 +93,20 @@ def main():
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         label_smoothing=args.label_smoothing,
-        seed=args.seed
+        seed=args.seed,
+        training_by_sampling=False
     )
     datamodule.prepare_data()
     datamodule.setup()
 
+    dummy = datamodule.train[0]
+    dummy = datamodule.invert(
+        torch.unsqueeze(dummy.X, dim=0), dummy.X_attributes
+    )
     model = WarfarinMortalityLightningModule(
-        in_dim=datamodule.train[0].X.size(dim=-1),
+        in_dim=dummy.size(dim=-1),
         hidden_dims=args.hidden_dims,
+        invert_continuous_transform=datamodule.invert,
         dropout=args.dropout,
         lr=args.lr,
         lr_milestones=args.lr_milestones,
