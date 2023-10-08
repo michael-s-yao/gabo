@@ -9,7 +9,7 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 import torch
 import lightning.pytorch as pl
 from lightning.pytorch.strategies.ddp import DDPStrategy
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 
 
@@ -47,7 +47,8 @@ def main():
         optimizer=exp.optimizer,
         lr=exp.lr,
         weight_decay=exp.weight_decay,
-        batch_size=exp.batch_size
+        batch_size=exp.batch_size,
+        n_critic_per_generator=exp.n_critic_per_generator
     )
 
     meta = f"warfarin_alpha={exp.alpha}"
@@ -58,13 +59,6 @@ def main():
             mode="min",
             filename=f"{meta}_{{epoch}}",
             save_last=True
-        ),
-        EarlyStopping(
-            monitor="val_loss",
-            min_delta=0.0,
-            patience=20,
-            verbose=False,
-            mode="min"
         )
     ]
     callbacks[0].CHECKPOINT_NAME_LAST = f"{meta}_{{epoch}}_last"

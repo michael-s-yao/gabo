@@ -97,6 +97,12 @@ class Experiment:
             help="Batch size. Default 128."
         )
         parser.add_argument(
+            "--n_critic_per_generator",
+            default=5,
+            type=int,
+            help="Number of times to train the critic over the generator."
+        )
+        parser.add_argument(
             "--seed", default=42, type=int, help="Random seed. Default 42."
         )
         parser.add_argument(
