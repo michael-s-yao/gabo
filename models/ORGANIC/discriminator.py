@@ -1,5 +1,19 @@
 """
+ORGANIC discriminator network implementation for molecule generation.
 
+Author(s):
+    Michael Yao @michael-s-yao
+
+Citation(s):
+    [1] Sanchez-Lengeling B, Outeiral C, Guimaraes GL, Aspuru-Guzik A.
+        Optimizing distributions over molecular space. An objective-
+        reinforced generative adversarial network for inverse-design
+        chemistry (ORGANIC). ChemRxiv. (2017). https://doi.org/
+        10.26434/chemrxiv.5309668.v3
+    [2] ORGANIC Github repo from @aspuru-guzik-group at
+        https://github.com/aspuru-guzik-group/ORGANIC
+
+Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch
 import torch.nn as nn
@@ -135,26 +149,3 @@ class SourceCritic(nn.Module):
         ]
         X = self.dropout(self.highway(torch.cat(X, dim=-1)))
         return torch.sigmoid(self.linear(X))
-
-
-if __name__ == "__main__":
-    import sys
-    sys.path.append(".")
-    from data.molecule import QM9DataModule
-    from data.molecule_utils import one_hot_encodings_to_tokens
-
-    dm = QM9DataModule(batch_size=4)
-    dm.prepare_data()
-    dm.setup()
-
-    model = SourceCritic(
-        kernel_num=128,
-        kernel_sizes=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20],
-        vocab=dm.vocab,
-        embedding_layer_size=64
-    )
-    for batch in dm.train_dataloader():
-        batch = one_hot_encodings_to_tokens(batch)
-        print(model(batch))
-        break
-    print(dm.vocab)
