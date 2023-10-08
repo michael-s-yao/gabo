@@ -455,15 +455,17 @@ class CTGANLightningModule(pl.LightningModule):
         """
         num_classes = defaultdict(lambda: 0)
         for attr in X_attributes:
-            if attr == "Therapeutic Dose of Warfarin":
-                continue
-            key = attr.split("_")[0].replace(".component", "")
+            key = attr.split("_")[0].replace(".component", "").replace(
+                ".normalized", ""
+            )
             num_classes[key] += 1
 
         idx = 0
         for attr, number in num_classes.items():
-            if attr.endswith(".normalized"):
+            if X_attributes[idx].endswith(".normalized"):
                 X[:, idx] = torch.tanh(X[:, idx])
+                idx, number = idx + 1, number - 1
+            elif X_attributes[idx] == "Therapeutic Dose of Warfarin":
                 idx += 1
                 continue
             end = idx + number
@@ -486,15 +488,18 @@ class CTGANLightningModule(pl.LightningModule):
         penalty_loss = 0.0
         num_classes = defaultdict(lambda: 0)
         for attr in X_attributes:
-            if attr == "Therapeutic Dose of Warfarin":
-                continue
-            elif attr.endswith(".normalized"):
-                continue
-            key = attr.split("_")[0].replace(".component", "")
+            key = attr.split("_")[0].replace(".component", "").replace(
+                ".normalized", ""
+            )
             num_classes[key] += 1
 
         idx = 0
         for attr, number in num_classes.items():
+            if X_attributes[idx].endswith(".normalized"):
+                idx, number = idx + 1, number - 1
+            elif X_attributes[idx] == "Therapeutic Dose of Warfarin":
+                idx += 1
+                continue
             end = idx + number
             penalty_loss += F.nll_loss(
                 Xq[:, idx:end],
