@@ -46,7 +46,8 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         num_workers: int = os.cpu_count() // 2,
         label_smoothing: Optional[float] = 0.01,
         seed: int = 42,
-        training_by_sampling: bool = True
+        training_by_sampling: bool = True,
+        pac: int = 16
     ):
         """
         Args:
@@ -60,6 +61,12 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
             seed: random seed. Default 42.
             training_by_sampling: whether to use the training by sampling
                 method from Xu et al. (2019).
+            pac: number of samples that will be packed together according to
+                the PacGAN framework. Default 16.
+        Citation(s):
+            [1] Lin Z, Khetan A, Fanti G, Oh S. PacGAN: The power of two
+                samples in generative adversarial networks. arXiv. (2017).
+                https://doi.org/10.48550/arXiv.1712.04086
         """
         super().__init__()
         self.root = root
@@ -75,6 +82,7 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         self.seed = seed
         self.rng = np.random.RandomState(seed=self.seed)
         self.training_by_sampling = training_by_sampling
+        self.pac = pac
 
         self.height = "Height (cm)"
         self.weight = "Weight (kg)"
@@ -138,16 +146,17 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
         self.num_val = round(val_frac * self.num_train)
         self.num_train = self.num_train - self.num_val
 
-        start_val = self.cv_idx * self.num_val
-        end_val = (self.cv_idx + 1) * self.num_val
-        self.val = self.rows[start_val:end_val]
-        self.train = np.concatenate((
-            self.rows[:start_val],
-            self.rows[end_val:(self.num_train + self.num_val)]
-        ))
         if self.cv_idx == -1:
-            self.train = np.concatenate((self.train, self.val))
-            self.val = self.train
+            self.train = np.array(self.rows[:(self.num_train + self.num_val)])
+            self.val = np.array(self.rows[:(self.num_train + self.num_val)])
+        else:
+            start_val = self.cv_idx * self.num_val
+            end_val = (self.cv_idx + 1) * self.num_val
+            self.val = self.rows[start_val:end_val]
+            self.train = np.concatenate((
+                self.rows[:start_val],
+                self.rows[end_val:(self.num_train + self.num_val)]
+            ))
         self.test = self.rows[(self.num_train + self.num_val):]
 
         self.train = IWPCWarfarinDataset(
@@ -340,6 +349,8 @@ class IWPCWarfarinDataModule(pl.LightningDataModule):
                 cond_mask = torch.cat(
                     (cond_mask, torch.unsqueeze(item.cond_mask, dim=0)), dim=0
                 )
+            if X.size(dim=0) >= (len(batch) // self.pac) * self.pac:
+                break
         return PatientSample(
             X,
             X_attributes,

@@ -56,6 +56,9 @@ class WarfarinMortalityLightningModule(pl.LightningModule):
 
         self.loss = nn.MSELoss()
 
+        # Initialize weights.
+        [param.data.fill_(0.01) for param in self.model.parameters()]
+
     def forward(self, patient: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the model.

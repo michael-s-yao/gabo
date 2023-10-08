@@ -152,6 +152,7 @@ class TGANContinuousDataTransform:
             stds = np.sqrt(transform.transform._bgm_transformer.covariances_)
             means = torch.tensor(np.squeeze(means)).to(data)
             stds = torch.tensor(np.squeeze(stds)).to(data)
+            component = torch.clamp(component, max=(means.size(dim=-1) - 1))
             mean_t = means[component].to(data)
             std_t = stds[component].to(data)
             inverted[column_name] = mean_t + (

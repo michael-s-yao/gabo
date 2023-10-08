@@ -88,7 +88,7 @@ def main():
         max_epochs=exp.num_epochs,
         accelerator=exp.device,
         logger=logger,
-        # callbacks=callbacks,
+        callbacks=callbacks,
         deterministic=True,
         fast_dev_run=exp.fast_dev_run,
         strategy=strategy,

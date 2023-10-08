@@ -10,7 +10,7 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import kstest
+from scipy.stats import ks_2samp
 from pathlib import Path
 import torch
 import lightning.pytorch as pl
@@ -28,7 +28,8 @@ from experiment.utility import seed_everything, plot_config
 def plot_test_results(
     ckpt: Union[Path, str],
     savepath: Optional[Union[Path, str]] = None,
-    seed: int = 42
+    seed: int = 42,
+    plot_result: str = "hist"
 ) -> None:
     plot_config(fontsize=18)
     device = torch.device("cpu")
@@ -49,36 +50,70 @@ def plot_test_results(
     model = model.to(device)
 
     plt.figure(figsize=(10, 6))
-    train, test = None, None
-    for dataset, label in zip(
-        [datamodule.train, datamodule.test], ["Train Dataset", "Test Dataset"]
-    ):
-        gts = np.array([pt.cost for pt in dataset])
-        preds = np.array([model(pt.X.to(device)).item() for pt in dataset])
-        vals = (preds - gts) / ((preds + gts) / 2.0)
-        if label == "Train Dataset":
-            train = vals
-        else:
-            test = vals
-        plt.hist(
-            vals,
-            label=(label + rf" ($N = {len(dataset)}$)"),
-            density=True,
-            alpha=0.5,
-            bins=np.linspace(-1, 1, 100),
-            ec="black"
-        )
+    if plot_result.lower() == "hist":
+        train, test = None, None
+        for dataset, label in zip(
+            [datamodule.train, datamodule.test],
+            ["Train Dataset", "Test Dataset"]
+        ):
+            preds, gts = [], []
+            for pt in dataset:
+                X = datamodule.invert(
+                    torch.unsqueeze(pt.X.to(device), dim=0), pt.X_attributes
+                )
+                preds.append(model(X).item())
+                gts.append(pt.cost)
+            preds, gts = np.array(preds), np.array(gts)
+            vals = preds - gts
+            if label == "Train Dataset":
+                train = vals
+            else:
+                test = vals
+            plt.hist(
+                vals,
+                label=(label + rf" ($N = {len(dataset)}$)"),
+                density=True,
+                alpha=0.5,
+                bins=np.linspace(-1, 1, 100),
+                ec="black"
+            )
+        plt.xlabel("Predicted Cost - True Cost")
+        plt.ylabel("Density")
+    elif plot_result.lower() == "bland_altman":
+        train, test = None, None
+        for dataset, label in zip(
+            [datamodule.train, datamodule.test],
+            ["Train Dataset", "Test Dataset"]
+        ):
+            preds, gts = [], []
+            for pt in dataset:
+                X = datamodule.invert(
+                    torch.unsqueeze(pt.X.to(device), dim=0), pt.X_attributes
+                )
+                pred_cost = model(X).item()
+                preds.append(pred_cost)
+                gts.append(pt.cost)
+            preds, gts = np.array(preds), np.array(gts)
+            y = preds - gts
+            x = 0.5 * (preds + gts)
+            plt.scatter(x, y, label=label, alpha=0.5)
+            if label == "Train Dataset":
+                train = y
+            else:
+                test = y
+        plt.xlabel("(True Cost + Predicted Cost) / 2")
+        plt.ylabel("Predicted Cost - True Cost")
+
     plt.legend()
-    plt.xlabel("True Cost - Predicted Cost")
-    plt.ylabel("Density")
     if savepath is None:
         plt.show()
     else:
         plt.savefig(savepath, dpi=600, bbox_inches="tight", transparent=True)
     plt.close()
+
     p, N = 0.0, 100
     for _ in range(N):
-        p += kstest(test, train, method='exact').pvalue / N
+        p += ks_2samp(test.ravel(), train.ravel(), method='exact').pvalue / N
     print(f"p = {p:.5f} (Kolmogorov-Smirnov Test)")
 
 
@@ -126,7 +161,7 @@ def main():
         EarlyStopping(
             monitor="val_loss",
             min_delta=0.0,
-            patience=10,
+            patience=50,
             verbose=False,
             mode="min"
         )
@@ -165,10 +200,12 @@ def main():
 
 
 if __name__ == "__main__":
-    reproduce_warfarin_cost_estimator_graph = False
+    reproduce_warfarin_cost_estimator_graph = True
     if reproduce_warfarin_cost_estimator_graph:
         plot_test_results(
             ckpt="./ckpts/warfarin_cost_estimator.ckpt",
-            savepath="./docs/warfarin_cost_estimator.png"
+            savepath="./docs/warfarin_cost_estimator.png",
+            plot_result="hist"
         )
-    main()
+    else:
+        main()

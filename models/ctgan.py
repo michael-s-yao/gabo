@@ -170,6 +170,7 @@ class CTGANLightningModule(pl.LightningModule):
         alpha: float,
         invert_continuous_transform: Callable[[torch.Tensor], torch.Tensor],
         lambda_: float = 10,
+        generator_penalty_weighting_: float = 0.1,
         embedding_dim: int = 64,
         generator_dims: Sequence[int] = [256, 256],
         critic_dims: Sequence[int] = [512, 512],
@@ -190,6 +191,7 @@ class CTGANLightningModule(pl.LightningModule):
             invert_continuous_transform: a function to invert the original
                 BayesianGMM transforms.
             lambda_: source critic gradient penalty weighting term. Default 10.
+            generator_penalty_weighting_: generator penalty weighting term.
             embedding_dim: size of the random sample inputs to the generator.
             generator_dims: size of the output samples for each of the Residual
                 layers in the generator model.
@@ -297,6 +299,35 @@ class CTGANLightningModule(pl.LightningModule):
             generator_penalty = self._generator_penalty(
                 batch.X, generated, batch.X_attributes
             )
+            generator_penalty *= self.hparams.generator_penalty_weighting_
+            self.log(
+                "train_loss",
+                generator_loss + cost + generator_penalty,
+                prog_bar=True,
+                sync_dist=True,
+                batch_size=batch.X.size(dim=0)
+            )
+            self.log(
+                "train_generator_loss",
+                generator_loss,
+                prog_bar=False,
+                sync_dist=True,
+                batch_size=batch.X.size(dim=0)
+            )
+            self.log(
+                "train_cost",
+                cost,
+                prog_bar=False,
+                sync_dist=True,
+                batch_size=batch.X.size(dim=0)
+            )
+            self.log(
+                "train_generator_penalty",
+                generator_penalty,
+                prog_bar=False,
+                sync_dist=True,
+                batch_size=batch.X.size(dim=0)
+            )
             self.manual_backward(generator_penalty, retain_graph=True)
             self.manual_backward(cost, retain_graph=True)
             self.manual_backward(generator_loss, retain_graph=True)
@@ -317,11 +348,98 @@ class CTGANLightningModule(pl.LightningModule):
         penalty_loss = self.hparams.lambda_ * self.critic.gradient_penalty(
             batch.X, generated.detach()
         )
+        self.log(
+            "train_critic_loss",
+            critic_loss,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=batch.X.size(dim=0)
+        )
+        self.log(
+            "train_critic_penalty",
+            penalty_loss,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=batch.X.size(dim=0)
+        )
         self.manual_backward(penalty_loss, retain_graph=True)
         self.manual_backward(critic_loss)
         critic_optimizer.step()
         critic_optimizer.zero_grad()
         self.untoggle_optimizer(critic_optimizer)
+
+    def validation_step(self, batch: PatientSample, batch_idx: int) -> None:
+        """
+        Validation step for the generative model.
+        Input:
+            batch: batch of input data for model training.
+            batch_idx: batch index.
+        Returns:
+            None.
+        """
+        generated = self._activate(self(batch), batch.X_attributes)
+
+        if self.hparams.wasserstein:
+            generator_loss = -self.hparams.alpha * self.critic(generated)
+        else:
+            generator_loss = -self.hparams.alpha * torch.log(
+                torch.sigmoid(self.critic(generated))
+            )
+        raw_generated = self.hparams.invert_continuous_transform(
+            generated, batch.X_attributes
+        )
+        cost = (1.0 - self.hparams.alpha) * torch.mean(
+            self.cost(raw_generated)
+        )
+        generator_penalty = self._generator_penalty(
+            batch.X, generated, batch.X_attributes
+        )
+        generator_penalty *= self.hparams.generator_penalty_weighting_
+        self.log(
+            "val_loss",
+            cost + generator_loss + generator_penalty,
+            prog_bar=True,
+            sync_dist=True,
+            batch_size=batch.X.size(dim=0)
+        )
+        self.log(
+            "val_generator_loss",
+            generator_loss,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=batch.X.size(dim=0)
+        )
+        self.log(
+            "val_generator_cost",
+            cost,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=batch.X.size(dim=0)
+        )
+        self.log(
+            "val_generator_penalty",
+            generator_penalty,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=batch.X.size(dim=0)
+        )
+
+        if self.hparams.wasserstein:
+            critic_loss = self.critic(generated.detach()) - self.critic(
+                batch.X
+            )
+        else:
+            critic_loss = torch.log(
+                torch.sigmoid(self.critic(generated.detach()))
+            )
+            critic_loss -= torch.log(torch.sigmoid(self.critic(batch.X)))
+        self.log(
+            "val_critic_loss",
+            critic_loss,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=batch.X.size(dim=0)
+        )
 
     def _activate(
         self, X: torch.Tensor, X_attributes: Sequence[str]
@@ -380,8 +498,8 @@ class CTGANLightningModule(pl.LightningModule):
             end = idx + number
             penalty_loss += F.nll_loss(
                 Xq[:, idx:end],
-                target=torch.argmax(Xq[:, idx:end], dim=-1),
-                reduce="sum"
+                target=torch.argmax(Xp[:, idx:end], dim=-1),
+                reduction="sum"
             )
             idx = end
         return penalty_loss / Xq.size(0)
