@@ -28,6 +28,12 @@ class Experiment:
             help="Relative regularization weighting. Default 0.5."
         )
         parser.add_argument(
+            "--lambda_",
+            default=10.0,
+            type=float,
+            help="Critic Lipschitz constraint regularization weighting.",
+        )
+        parser.add_argument(
             "--resume_from",
             "--ckpt",
             default=None,
