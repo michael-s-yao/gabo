@@ -20,10 +20,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import lightning.pytorch as pl
-from typing import Callable, Sequence, Union
+from typing import Callable, Optional, Sequence, Union
 
 from data.iwpc import PatientSample
 from models.fcnn import FCNN
+from models.critic import WeightClipper
 from models.mortality_estimator import WarfarinMortalityLightningModule
 
 
@@ -33,7 +34,8 @@ class SourceCritic(nn.Module):
         in_dim: int,
         hidden_dims: Sequence[int],
         dropout: float,
-        pac: int = 16
+        pac: int = 16,
+        c: Optional[float] = -1.0
     ):
         """
         Args:
@@ -42,6 +44,7 @@ class SourceCritic(nn.Module):
             dropout: dropout. Default 0.1.
             pac: number of samples to pack together according to the PacGAN
                 framework. Default 16.
+            c: optional weight clipping parameter. Default not used.
         Citation(s):
             [1] Lin Z, Khetan A, Fanti G, Oh S. PacGAN: The power of two
                 samples in generative adversarial networks. arXiv. (2017).
@@ -52,6 +55,7 @@ class SourceCritic(nn.Module):
         self.hidden_dims = hidden_dims
         self.dropout = dropout
         self.pac = pac
+        self.c = c
 
         self.model = FCNN(
             in_dim=(self.in_dim * self.pac),
@@ -60,6 +64,9 @@ class SourceCritic(nn.Module):
             dropout=self.dropout,
             final_activation=None
         )
+        if self.c > 0.0:
+            self.clipper = WeightClipper(c=self.c)
+            self.clip()
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
@@ -84,6 +91,8 @@ class SourceCritic(nn.Module):
         Returns:
             Quadratic penalty term enforcing the critic to be K-Lipschitz.
         """
+        if self.c > 0.0:
+            return torch.mean(torch.zeros_like(real))
         mix = torch.rand(real.size(dim=-1)).to(real)
         X = (mix * real) + ((1 - mix) * generated)
         X.requires_grad_(True)
@@ -98,6 +107,16 @@ class SourceCritic(nn.Module):
         )
         gradX = gradX[0].view(-1, self.pac * real.size(dim=1))
         return torch.mean(torch.square(torch.norm(gradX, p=2, dim=1) - K))
+
+    def clip(self) -> None:
+        """
+        Clips the weights of the model to [-self.c, self.c].
+        Input:
+            None.
+        Returns:
+            None.
+        """
+        self.model.apply(self.clipper)
 
 
 class Residual(nn.Module):
@@ -169,8 +188,8 @@ class CTGANLightningModule(pl.LightningModule):
         condition_mask_dim: int,
         alpha: float,
         invert_continuous_transform: Callable[[torch.Tensor], torch.Tensor],
-        lambda_: float = 10,
-        generator_penalty_weighting_: float = 0.1,
+        lambda_: float = 10.0,
+        generator_penalty_weighting_: float = 1.0,
         embedding_dim: int = 64,
         generator_dims: Sequence[int] = [256, 256],
         critic_dims: Sequence[int] = [512, 512],
@@ -191,6 +210,8 @@ class CTGANLightningModule(pl.LightningModule):
             invert_continuous_transform: a function to invert the original
                 BayesianGMM transforms.
             lambda_: source critic gradient penalty weighting term. Default 10.
+                If -1, then weight clipping will be used to enforce the critic
+                Lipschitz constraint instead of the gradient penalty term.
             generator_penalty_weighting_: generator penalty weighting term.
             embedding_dim: size of the random sample inputs to the generator.
             generator_dims: size of the output samples for each of the Residual
@@ -227,12 +248,14 @@ class CTGANLightningModule(pl.LightningModule):
         self.critic = SourceCritic(
             in_dim=self.hparams.patient_vector_dim,
             hidden_dims=self.hparams.critic_dims,
-            dropout=self.hparams.dropout
+            dropout=self.hparams.dropout,
+            c=(0.01 if self.hparams.lambda_ < 0.0 else -1.0)
         )
 
         self.cost = WarfarinMortalityLightningModule.load_from_checkpoint(
-            self.hparams.cost_ckpt
+            self.hparams.cost_ckpt, map_device="cpu"
         )
+        self.cost = self.cost.to(self.device)
         self.cost.eval()
 
     def forward(self, batch: PatientSample) -> torch.Tensor:
@@ -300,6 +323,7 @@ class CTGANLightningModule(pl.LightningModule):
                 batch.X, generated, batch.X_attributes
             )
             generator_penalty *= self.hparams.generator_penalty_weighting_
+
             self.log(
                 "train_loss",
                 generator_loss + cost + generator_penalty,
@@ -345,9 +369,12 @@ class CTGANLightningModule(pl.LightningModule):
                 torch.sigmoid(self.critic(generated.detach()))
             )
             critic_loss -= torch.log(torch.sigmoid(self.critic(batch.X)))
-        penalty_loss = self.hparams.lambda_ * self.critic.gradient_penalty(
-            batch.X, generated.detach()
-        )
+        if self.hparams.lambda_ > 0.0:
+            penalty_loss = self.hparams.lambda_ * self.critic.gradient_penalty(
+                batch.X, generated.detach()
+            )
+        elif self.hparams.wasserstein:
+            self.critic.clip()
         self.log(
             "train_critic_loss",
             critic_loss,
@@ -355,14 +382,15 @@ class CTGANLightningModule(pl.LightningModule):
             sync_dist=True,
             batch_size=batch.X.size(dim=0)
         )
-        self.log(
-            "train_critic_penalty",
-            penalty_loss,
-            prog_bar=False,
-            sync_dist=True,
-            batch_size=batch.X.size(dim=0)
-        )
-        self.manual_backward(penalty_loss, retain_graph=True)
+        if self.hparams.lambda_ > 0.0:
+            self.log(
+                "train_critic_penalty",
+                penalty_loss,
+                prog_bar=False,
+                sync_dist=True,
+                batch_size=batch.X.size(dim=0)
+            )
+            self.manual_backward(penalty_loss, retain_graph=True)
         self.manual_backward(critic_loss)
         critic_optimizer.step()
         critic_optimizer.zero_grad()
@@ -502,12 +530,12 @@ class CTGANLightningModule(pl.LightningModule):
                 continue
             end = idx + number
             penalty_loss += F.nll_loss(
-                Xq[:, idx:end],
+                torch.log(Xq[:, idx:end]),
                 target=torch.argmax(Xp[:, idx:end], dim=-1),
                 reduction="sum"
             )
             idx = end
-        return penalty_loss / Xq.size(0)
+        return penalty_loss / torch.numel(Xq)
 
     def configure_optimizers(self) -> Sequence[optim.Optimizer]:
         """

@@ -41,6 +41,7 @@ def main():
         condition_mask_dim=condition_mask_dim,
         invert_continuous_transform=datamodule.invert,
         alpha=exp.alpha,
+        lambda_=10.0,
         embedding_dim=64,
         generator_dims=[256, 256],
         critic_dims=[512, 512],
@@ -103,4 +104,5 @@ def main():
 
 
 if __name__ == "__main__":
+    torch.set_float32_matmul_precision("high")
     main()
