@@ -14,6 +14,7 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 from collections import defaultdict
 import numpy as np
+import os
 from pathlib import Path
 import torch
 import torch.nn as nn
@@ -199,7 +200,9 @@ class CTGANLightningModule(pl.LightningModule):
         dropout: float = 0.1,
         batch_size: int = 64,
         n_critic_per_generator: int = 5,
-        cost_ckpt: Union[Path, str] = "./ckpts/warfarin_cost_estimator.ckpt",
+        cost_ckpt: Union[Path, str] = os.path.join(
+            "./ckpts", "warfarin", "warfarin_cost_estimator.ckpt"
+        ),
         wasserstein: bool = True
     ):
         """

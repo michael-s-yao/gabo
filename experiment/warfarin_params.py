@@ -29,7 +29,7 @@ class Experiment:
         )
         parser.add_argument(
             "--lambda_",
-            default=10.0,
+            default=100.0,
             type=float,
             help="Critic Lipschitz constraint regularization weighting.",
         )
@@ -56,7 +56,7 @@ class Experiment:
             "--lr",
             default=0.0002,
             type=float,
-            help="Learning rate. Default 0.002."
+            help="Learning rate. Default 0.0002."
         )
         parser.add_argument(
             "--optimizer",

@@ -16,16 +16,19 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import argparse
 from collections import defaultdict
+import matplotlib.pyplot as plt
 import numpy as np
 import sys
+from pathlib import Path
 from scipy.stats import ttest_ind
 from sklearn.cluster import KMeans
 import torch
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple, Union
 
 sys.path.append(".")
 from data.iwpc import IWPCWarfarinDataModule
 from models.ctgan import CTGANLightningModule
+from models.mortality_estimator import WarfarinMortalityLightningModule
 from experiment.utility import seed_everything
 
 
@@ -40,6 +43,12 @@ def build_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="CTGAN Model Evaluation")
     parser.add_argument(
         "--ckpt", type=str, required=True, help="Model checkpoint to evaluate."
+    )
+    parser.add_argument(
+        "--savepath",
+        type=str,
+        default=None,
+        help="Path to save the warfarin-associated cost estimation plot to."
     )
     parser.add_argument(
         "--batch_size", type=int, default=128, help="Batch size. Default 128."
@@ -60,7 +69,7 @@ def parse_features(
         X: A BxF matrix of B observations of F features.
         X_attributes: a list of the feature names.
     Returns:
-        X_pruned: the matrix of the parsed features.
+        X: the matrix of the parsed features.
         trimmed_attributes: a list of the parsed feature names.
     """
     attributes = defaultdict(lambda: [])
@@ -73,11 +82,15 @@ def parse_features(
     for attr, lst in attributes.items():
         if attr.startswith("Height (cm)") or attr.startswith("Weight (kg)"):
             trimmed_attributes += [attr]
-        elif len(lst) > 2:
+        elif len(lst) > 2 or attr.startswith("Gender"):
             trimmed_attributes += lst
         else:
             trimmed_attributes += [attr]
-    return X[:, :len(trimmed_attributes)], trimmed_attributes
+    if X.size(dim=-1) != len(trimmed_attributes):
+        error_message = f"X dimensions {X.size()} and number of attributes "
+        error_message += f"{len(trimmed_attributes)} do not match!"
+        raise ValueError(error_message)
+    return X, trimmed_attributes
 
 
 def divergence(
@@ -152,6 +165,8 @@ def divergence(
             print(f"  {attr}: {div[attr]:.5f}")
             print(f"  (P): {p}")
             print(f"  (Q): {q}")
+    avg_divergence = sum([div[attr] for attr in div.keys()]) / len(div.keys())
+    print(f" Average Divergence: {avg_divergence}")
     return div
 
 
@@ -289,6 +304,28 @@ def support_coverage(
     return coverage
 
 
+def estimate_mortality_cost(
+    patients: torch.Tensor,
+    ckpt: Union[Path, str] = "./ckpts/warfarin_cost_estimator.ckpt"
+) -> torch.Tensor:
+    """
+    Estimates the mortality cost for the given patient data using a learned
+    warfarin-associated mortality cost estimation model.
+    Input:
+        patients: a BxF tensor of F-dimensional features of B patients.
+        ckpt: checkpoint to the trained Warfarin cost estimator function.
+    Returns:
+        A vector of B estimations for the mortality cost.
+    """
+    cost = WarfarinMortalityLightningModule.load_from_checkpoint(
+        ckpt, map_device=patients.device
+    )
+    cost.eval()
+    cost = cost.to(patients.device)
+    with torch.no_grad():
+        return cost(patients)
+
+
 def main():
     args = build_args()
     seed_everything(seed=args.seed)
@@ -355,37 +392,55 @@ def main():
             test = torch.cat((test, Xp), dim=0)
             test_generated = torch.cat((test_generated, Xq), dim=0)
 
+    # Warfarin-associated mortality cost estimation.
+    print("\nEstimated Mortality Cost")
+    train_cost = estimate_mortality_cost(train)
+    test_cost = estimate_mortality_cost(test)
+    generated_cost = estimate_mortality_cost(train_generated)
+
+    plot = False
+    if plot:
+        plt.figure(figsize=(10, 6))
+        plt.hist(train_cost, bins=100, density=True, alpha=0.6, label="Training")
+        plt.hist(test_cost, bins=100, density=True, alpha=0.5, label="Test")
+        plt.hist(
+            generated_cost, bins=100, density=True, alpha=0.4, label="Generated"
+        )
+        plt.xlabel("Estimated Warfarin-Associated Mortality Cost")
+        plt.ylabel("Density")
+        plt.legend()
+        if args.savepath is None:
+            plt.show()
+        else:
+            print(f"Saved estimated mortality cost plot to {args.savepath}")
+            plt.savefig(
+                args.savepath, transparent=True, dpi=600, bbox_inches="tight"
+            )
+        plt.close()
+
     train, test = train.detach().cpu().numpy(), test.detach().cpu().numpy()
     train_generated = train_generated.detach().cpu().numpy()
     test_generated = test_generated.detach().cpu().numpy()
 
     # JS Divergence (Lower is Better). Goncalves et al. [1].
-    print("JS Divergence (Lower is Better)")
-    divergence(train, test, attributes, labels=["Train", "Test"])
-    divergence(
-        train, train_generated, attributes, labels=["Train", "Generated"]
-    )
+    print("\nJS Divergence (Lower is Better)")
+    divergence(test, train, attributes, labels=["Test", "Train"])
     divergence(test, test_generated, attributes, labels=["Test", "Generated"])
 
     # Pairwise Correlation Difference (Lower is Better). Goncalves et al. [1].
     print("\nPairwise Correlation Difference (Lower is Better)")
-    pcd(train, test, seed=args.seed, labels=["Train", "Test"])
-    pcd(train, train_generated, seed=args.seed, labels=["Train", "Generated"])
+    pcd(test, train, seed=args.seed, labels=["Test", "Train"])
     pcd(test, test_generated, seed=args.seed, labels=["Test", "Generated"])
 
     # Negative Log Cluster (Higher is Better).
     # Goncalves et al. [1] and Woo et al. [2].
     print("\nNegative Log Cluster (Higher is Better)")
-    negative_log_cluster(train, test, labels=["Train", "Test"])
-    negative_log_cluster(train, train_generated, labels=["Train", "Generated"])
+    negative_log_cluster(test, train, labels=["Test", "Train"])
     negative_log_cluster(test, test_generated, labels=["Test", "Generated"])
 
     # Support Coverage (Higher is Better). Goncalves et al. [1].
     print("\nSupport Coverage (Higher is Better)")
-    support_coverage(train, test, attributes, labels=["Train", "Test"])
-    support_coverage(
-        train, train_generated, attributes, labels=["Train", "Generated"]
-    )
+    support_coverage(test, train, attributes, labels=["Test", "Train"])
     support_coverage(
         test, test_generated, attributes, labels=["Test", "Generated"]
     )
