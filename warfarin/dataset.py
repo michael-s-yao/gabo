@@ -205,7 +205,16 @@ class WarfarinDataset:
             y: the target warfarin dose for the training dataset patients.
         """
         return (
-            self.train.drop([self.dose], axis=1), self.train[self.dose]
+            self.train.drop(
+                [
+                    self.inr,
+                    self.target_inr,
+                    self.did_reach_stable_dose,
+                    "Age_0.0"
+                ],
+                axis=1
+            ),
+            self.train[self.dose]
         )
 
     @property
@@ -219,7 +228,16 @@ class WarfarinDataset:
             y: the target warfarin dose for the test dataset patients.
         """
         return (
-            self.test.drop([self.dose], axis=1), self.test[self.dose]
+            self.test.drop(
+                [
+                    self.inr,
+                    self.target_inr,
+                    self.did_reach_stable_dose,
+                    "Age_0.0"
+                ],
+                axis=1
+            ),
+            self.test[self.dose]
         )
 
     def _impute_heights_and_weights(

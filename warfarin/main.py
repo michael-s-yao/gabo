@@ -11,9 +11,11 @@ import pandas as pd
 from collections.abc import Iterable
 from itertools import product
 from pathlib import Path
-from sklearn.model_selection import cross_val_score
-from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import Lasso
+from sklearn.model_selection import cross_val_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeRegressor
 from tqdm import tqdm
 from typing import Any, Dict, Sequence, Tuple, Union
 
@@ -35,7 +37,7 @@ def dosage_cost(pred_dose: np.ndarray, gt_dose: np.ndarray) -> np.ndarray:
 
 
 def hyperparams(
-    model: Union[DecisionTreeRegressor, RandomForestRegressor]
+    model: Union[DecisionTreeRegressor, RandomForestRegressor, Lasso]
 ) -> Tuple[Sequence[str], Iterable[Tuple[int]], int]:
     """
     Returns an iterable over the hyperparameter search space.
@@ -46,6 +48,14 @@ def hyperparams(
         hyperparam_search: an iterable over the hyperparameter search space.
         total_searches: the cardinality of the hyperparameter search space.
     """
+    if model == Lasso:
+        alpha = [1.0, 2.0, 5.0]
+        alpha = [
+            [factor * x]
+            for x in [1.0, 2.0, 5.0]
+            for factor in [0.001, 0.01, 0.1, 1, 10, 100]
+        ]
+        return ["alpha"], alpha, len(alpha)
     max_depth = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, None]
     min_samples_split = [2, 4, 8, 16, 32, 64, 128]
     min_samples_leaf = [1, 2, 4, 8, 16]
@@ -67,9 +77,9 @@ def hyperparams(
 
 
 def search_hyperparams(
-    model: Union[DecisionTreeRegressor, RandomForestRegressor],
+    model: Union[DecisionTreeRegressor, RandomForestRegressor, Lasso],
     savepath: Union[Path, str],
-    cv: int = 5
+    cv: int = 10
 ) -> Tuple[Dict[str, Any], Sequence[float]]:
     """
     Performs a search over the hyperparameter search space.
@@ -86,16 +96,24 @@ def search_hyperparams(
     dataset = WarfarinDataset()
     dose = WarfarinDose()
 
+    h, w, d = "Height (cm)", "Weight (kg)", "Therapeutic Dose of Warfarin"
     X_train, pred_dose_train = dataset.train_dataset
     gt_dose_train = dose(X_train)
     cost_train = dosage_cost(pred_dose_train, gt_dose_train)
+
+    if model == Lasso:
+        scaler_h, scaler_w = StandardScaler(), StandardScaler()
+        scaler_d = StandardScaler()
+        X_train[h] = scaler_h.fit_transform(X_train[h].to_numpy()[:, None])
+        X_train[w] = scaler_w.fit_transform(X_train[w].to_numpy()[:, None])
+        X_train[d] = scaler_d.fit_transform(X_train[d].to_numpy()[:, None])
 
     names, search, total = hyperparams(model)
     min_mse, best_mses, best_hyperparams = 1e12, None, None
     random_forest_results = []
     for params in tqdm(search, desc="Hyperparameter Search", total=total):
         params = {name: val for name, val in zip(names, params)}
-        regressor = model(**params)
+        regressor = model(**params, max_iter=int(1e6))
         mses = cross_val_score(regressor, X_train, cost_train, cv=cv)
         if np.mean(mses) < min_mse:
             min_mse, best_mses, best_hyperparams = np.mean(mses), mses, params
@@ -108,8 +126,9 @@ def search_hyperparams(
 
 
 if __name__ == "__main__":
+    model = Lasso
     best_hyperparams, best_mses = search_hyperparams(
-        model=DecisionTreeRegressor,
-        savepath="./actual_decision_tree_hyperparam_search.csv"
+        model=model,
+        savepath=f"./{str(model).split('.')[-1][:-2]}_hyperparam_search.csv"
     )
     print(best_hyperparams, best_mses)
