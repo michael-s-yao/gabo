@@ -113,7 +113,11 @@ def search_hyperparams(
     random_forest_results = []
     for params in tqdm(search, desc="Hyperparameter Search", total=total):
         params = {name: val for name, val in zip(names, params)}
-        regressor = model(**params, max_iter=int(1e6))
+        if model == Lasso:
+            params["max_iter"] = int(1e6)
+            if "max_iter" not in names:
+                names.append("max_iter")
+        regressor = model(**params)
         mses = cross_val_score(regressor, X_train, cost_train, cv=cv)
         if np.mean(mses) < min_mse:
             min_mse, best_mses, best_hyperparams = np.mean(mses), mses, params
@@ -126,7 +130,7 @@ def search_hyperparams(
 
 
 if __name__ == "__main__":
-    model = Lasso
+    model = DecisionTreeRegressor
     best_hyperparams, best_mses = search_hyperparams(
         model=model,
         savepath=f"./{str(model).split('.')[-1][:-2]}_hyperparam_search.csv"
