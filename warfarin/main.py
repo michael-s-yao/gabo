@@ -90,15 +90,13 @@ def search_hyperparams(
     gt_dose_train = dose(X_train)
     cost_train = dosage_cost(pred_dose_train, gt_dose_train)
 
-    names, search, total = hyperparams(RandomForestRegressor)
+    names, search, total = hyperparams(model)
     min_mse, best_mses, best_hyperparams = 1e12, None, None
     random_forest_results = []
-    for params in tqdm(
-        search, desc="RandomForestRegressor Hyperparameter Search", total=total
-    ):
+    for params in tqdm(search, desc="Hyperparameter Search", total=total):
         params = {name: val for name, val in zip(names, params)}
-        model = RandomForestRegressor(**params)
-        mses = cross_val_score(model, X_train, cost_train, cv=cv)
+        regressor = model(**params)
+        mses = cross_val_score(regressor, X_train, cost_train, cv=cv)
         if np.mean(mses) < min_mse:
             min_mse, best_mses, best_hyperparams = np.mean(mses), mses, params
         results = [val for _, val in params.items()]
@@ -111,7 +109,7 @@ def search_hyperparams(
 
 if __name__ == "__main__":
     best_hyperparams, best_mses = search_hyperparams(
-        model=RandomForestRegressor,
-        savepath="./random_forest_hyperparam_search.csv"
+        model=DecisionTreeRegressor,
+        savepath="./actual_decision_tree_hyperparam_search.csv"
     )
     print(best_hyperparams, best_mses)
