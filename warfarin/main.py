@@ -79,7 +79,8 @@ def hyperparams(
 def search_hyperparams(
     model: Union[DecisionTreeRegressor, RandomForestRegressor, Lasso],
     savepath: Union[Path, str],
-    cv: int = 10
+    cv: int = 10,
+    seed: int = 42
 ) -> Tuple[Dict[str, Any], Sequence[float]]:
     """
     Performs a search over the hyperparameter search space.
@@ -87,16 +88,17 @@ def search_hyperparams(
         model: the model to search the hyperparameters over.
         savepath: the CSV path to save the results of the search to.
         cv: number of folds for cross validation.
+        seed: random seed. Default 42.
     Returns:
         best_hyperparams: a dictionary of the best hyperparameter values for
             the model.
         best_mses: the best model scores from cross validation using the best
             hyperparameters.
     """
-    dataset = WarfarinDataset()
+    dataset = WarfarinDataset(seed=seed)
     dose = WarfarinDose()
 
-    h, w, d = "Height (cm)", "Weight (kg)", "Therapeutic Dose of Warfarin"
+    h, w, d = dataset.height, dataset.weight, dataset.dose
     X_train, pred_dose_train = dataset.train_dataset
     gt_dose_train = dose(X_train)
     cost_train = dosage_cost(pred_dose_train, gt_dose_train)
@@ -104,12 +106,13 @@ def search_hyperparams(
     if model == Lasso:
         scaler_h, scaler_w = StandardScaler(), StandardScaler()
         scaler_d = StandardScaler()
-        X_train[h] = scaler_h.fit_transform(X_train[h].to_numpy()[:, None])
-        X_train[w] = scaler_w.fit_transform(X_train[w].to_numpy()[:, None])
-        X_train[d] = scaler_d.fit_transform(X_train[d].to_numpy()[:, None])
+        for col, scaler in zip([h, w, d], [scaler_h, scaler_w, scaler_d]):
+            X_train[col] = scaler.fit_transform(
+                X_train[col].to_numpy()[:, None]
+            )
 
     names, search, total = hyperparams(model)
-    min_mse, best_mses, best_hyperparams = 1e12, None, None
+    best_nmses, best_hyperparams = np.full(cv, -1e12), None
     random_forest_results = []
     for params in tqdm(search, desc="Hyperparameter Search", total=total):
         params = {name: val for name, val in zip(names, params)}
@@ -118,21 +121,24 @@ def search_hyperparams(
             if "max_iter" not in names:
                 names.append("max_iter")
         regressor = model(**params)
-        mses = cross_val_score(regressor, X_train, cost_train, cv=cv)
-        if np.mean(mses) < min_mse:
-            min_mse, best_mses, best_hyperparams = np.mean(mses), mses, params
+        nmses = cross_val_score(
+            regressor,
+            X_train,
+            cost_train,
+            cv=cv,
+            scoring="neg_mean_squared_error"
+        )
+        if np.mean(nmses) > np.mean(best_nmses):
+            best_nmses, best_hyperparams = nmses, params
         results = [val for _, val in params.items()]
-        results += [np.mean(mses), np.std(mses, ddof=1)]
+        results += [np.mean(-1.0 * nmses), np.std(-1.0 * nmses, ddof=1)]
         random_forest_results.append(results)
     columns = names + ["cv_score_mean", "cv_score_std"]
     pd.DataFrame(random_forest_results, columns=columns).to_csv(savepath)
-    return best_hyperparams, best_mses
+    return best_hyperparams, best_nmses
 
 
 if __name__ == "__main__":
-    model = DecisionTreeRegressor
-    best_hyperparams, best_mses = search_hyperparams(
-        model=model,
-        savepath=f"./{str(model).split('.')[-1][:-2]}_hyperparam_search.csv"
-    )
-    print(best_hyperparams, best_mses)
+    model = RandomForestRegressor
+    savepath = f"./{str(model).split('.')[-1][:-2]}_hyperparams.csv"
+    search_hyperparams(model, savepath)
