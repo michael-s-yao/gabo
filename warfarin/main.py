@@ -1,144 +1,158 @@
 """
-Main driver program for warfarin counterfactual generation learning.
+Main driver program for warfarin counterfactual generation.
 
 Author(s):
     Michael Yao @michael-s-yao
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
+import argparse
+import json
+import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-from collections.abc import Iterable
-from itertools import product
-from pathlib import Path
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import Lasso
-from sklearn.model_selection import cross_val_score
-from sklearn.preprocessing import StandardScaler
-from sklearn.tree import DecisionTreeRegressor
+import pickle
 from tqdm import tqdm
-from typing import Any, Dict, Sequence, Tuple, Union
+from sklearn.linear_model import Lasso
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import StandardScaler
 
+from cost import dosage_cost
 from dataset import WarfarinDataset
 from dosing import WarfarinDose
+from sampler import RandomSampler
 
 
-def dosage_cost(pred_dose: np.ndarray, gt_dose: np.ndarray) -> np.ndarray:
-    """
-    Defines a quadratic cost function dependent on a patient's predicted dose
-    and true stable warfarin dose.
-    Input:
-        pred_dose: the predicted weekly warfarin dose(s) of the patient(s).
-        gt_dose: the true stable weekly warfarin dose(s) of the patient(s).
-    Returns:
-        The cost associated with each patient's predicted dose.
-    """
-    return np.square(pred_dose - gt_dose)
+def build_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Warfarin Dosage Policy")
+
+    parser.add_argument(
+        "--surrogate_cost",
+        type=str,
+        default="./docs/MLPRegressor_cost.pkl",
+        help="Path to surrogate cost function."
+    )
+    parser.add_argument(
+        "--hparams",
+        type=str,
+        default="./hparams.json",
+        help="Path to JSON file with surrogate cost hyperparameters."
+    )
+    parser.add_argument(
+        "--num_epochs",
+        type=int,
+        default=500,
+        help="Number of batches to sample and optimizer over. Default 500."
+    )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=-1,
+        help="Patience for early stopping. By default, no early stopping."
+    )
+    parser.add_argument(
+        "--savepath",
+        type=str,
+        default=None,
+        help="Path to save the optimization results to. Default not saved."
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=16, help="Batch size. Default 16."
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed. Default 42."
+    )
+
+    return parser.parse_args()
 
 
-def hyperparams(
-    model: Union[DecisionTreeRegressor, RandomForestRegressor, Lasso]
-) -> Tuple[Sequence[str], Iterable[Tuple[int]], int]:
-    """
-    Returns an iterable over the hyperparameter search space.
-    Input:
-        model: the model to search the hyperparameters over.
-    Returns:
-        hyperparam_names: the names of the hyperparameters.
-        hyperparam_search: an iterable over the hyperparameter search space.
-        total_searches: the cardinality of the hyperparameter search space.
-    """
-    if model == Lasso:
-        alpha = [1.0, 2.0, 5.0]
-        alpha = [
-            [factor * x]
-            for x in [1.0, 2.0, 5.0]
-            for factor in [0.001, 0.01, 0.1, 1, 10, 100]
-        ]
-        return ["alpha"], alpha, len(alpha)
-    max_depth = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, None]
-    min_samples_split = [2, 4, 8, 16, 32, 64, 128]
-    min_samples_leaf = [1, 2, 4, 8, 16]
-    max_leaf_nodes = [2, 4, 8, 16, 32, 64, 128, None]
-    hyperparams = [
-        max_depth, min_samples_split, min_samples_leaf, max_leaf_nodes
-    ]
-    hyperparam_names = [
-        "max_depth", "min_samples_split", "min_samples_leaf", "max_leaf_nodes"
-    ]
-    if model == RandomForestRegressor:
-        n_estimators = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
-        hyperparam_names.append("n_estimators")
-        hyperparams.append(n_estimators)
-    elif model != DecisionTreeRegressor:
-        raise NotImplementedError(f"Unrecognized model type {model}")
-    total_searches = np.prod([len(param_vals) for param_vals in hyperparams])
-    return hyperparam_names, iter(product(*hyperparams)), total_searches
+def main():
+    args = build_args()
 
-
-def search_hyperparams(
-    model: Union[DecisionTreeRegressor, RandomForestRegressor, Lasso],
-    savepath: Union[Path, str],
-    cv: int = 10,
-    seed: int = 42
-) -> Tuple[Dict[str, Any], Sequence[float]]:
-    """
-    Performs a search over the hyperparameter search space.
-    Input:
-        model: the model to search the hyperparameters over.
-        savepath: the CSV path to save the results of the search to.
-        cv: number of folds for cross validation.
-        seed: random seed. Default 42.
-    Returns:
-        best_hyperparams: a dictionary of the best hyperparameter values for
-            the model.
-        best_mses: the best model scores from cross validation using the best
-            hyperparameters.
-    """
-    dataset = WarfarinDataset(seed=seed)
+    dataset = WarfarinDataset(seed=args.seed)
     dose = WarfarinDose()
+    with open(args.surrogate_cost, "rb") as f:
+        cost_func = pickle.load(f)
+    with open(args.hparams, "rb") as f:
+        p = json.load(f)[str(type(cost_func)).split(".")[-1][:-2]]["p"]
 
-    h, w, d = dataset.height, dataset.weight, dataset.dose
     X_train, pred_dose_train = dataset.train_dataset
     gt_dose_train = dose(X_train)
+    X_test, pred_dose_test = dataset.test_dataset
+    gt_dose_test = dose(X_test)
     cost_train = dosage_cost(pred_dose_train, gt_dose_train)
+    cost_train_p = np.power(cost_train, p)
+    scaler_cost = StandardScaler()
+    cost_train = scaler_cost.fit_transform(cost_train_p.to_numpy()[:, None])
+    cost_test = dosage_cost(pred_dose_test, gt_dose_test)
 
-    if model == Lasso:
+    if isinstance(cost_func, (Lasso, MLPRegressor)):
         scaler_h, scaler_w = StandardScaler(), StandardScaler()
         scaler_d = StandardScaler()
-        for col, scaler in zip([h, w, d], [scaler_h, scaler_w, scaler_d]):
+        for col, scaler in zip(
+            [dataset.height, dataset.weight, dataset.dose],
+            [scaler_h, scaler_w, scaler_d]
+        ):
             X_train[col] = scaler.fit_transform(
                 X_train[col].to_numpy()[:, None]
             )
+            X_test[col] = scaler.transform(X_test[col].to_numpy()[:, None])
 
-    names, search, total = hyperparams(model)
-    best_nmses, best_hyperparams = np.full(cv, -1e12), None
-    random_forest_results = []
-    for params in tqdm(search, desc="Hyperparameter Search", total=total):
-        params = {name: val for name, val in zip(names, params)}
-        if model == Lasso:
-            params["max_iter"] = int(1e6)
-            if "max_iter" not in names:
-                names.append("max_iter")
-        regressor = model(**params)
-        nmses = cross_val_score(
-            regressor,
-            X_train,
-            cost_train,
-            cv=cv,
-            scoring="neg_mean_squared_error"
+    policy = RandomSampler(min_z_dose=-2.0, max_z_dose=2.0, seed=args.seed)
+    X = X_train
+    best_cost, best_epoch = 1e12, None
+    preds, gts = [], []
+    with tqdm(
+        range(args.num_epochs), desc="Optimizing Warfarin Dose", leave=False
+    ) as pbar:
+        for i, _ in enumerate(pbar):
+            pred_costs = np.squeeze(cost_func.predict(X))[:, None]
+            pred_costs = np.power(
+                np.squeeze(scaler_cost.inverse_transform(pred_costs)), 1.0 / p
+            )
+            _ = [
+                policy.feedback(cost_func.predict(policy(X)))
+                for _ in range(args.batch_size)
+            ]
+            optimal_doses = policy.optimum()
+            X[policy.dose_key] = optimal_doses
+            policy.reset()
+            cost = np.mean(pred_costs)
+            preds.append((cost, np.std(pred_costs, ddof=1)))
+            gt_costs = dosage_cost(X[policy.dose_key], dose(X))
+            gts.append((np.mean(gt_costs), np.std(gt_costs, ddof=1)))
+            pbar.set_postfix(cost=cost)
+            if args.patience > 0:
+                if cost < best_cost:
+                    best_cost, best_epoch = cost, i
+                if i - best_epoch > args.patience:
+                    break
+
+    preds = (
+        np.array([mean for mean, _ in preds]),
+        np.array([std for _, std in preds]) / np.sqrt(len(preds))
+    )
+    gts = (
+        np.array([mean for mean, _ in gts]),
+        np.array([std for _, std in gts]) / np.sqrt(len(gts))
+    )
+    plt.figure(figsize=(10, 5))
+    steps = args.batch_size * np.arange(len(preds[0]))
+    for (mean, std), label in zip([preds, gts], ["Surrogate", "Oracle"]):
+        plt.plot(steps, mean, label=label)
+        plt.fill_between(steps, mean - std, mean + std, alpha=0.1)
+    plt.xlabel("Optimization Steps")
+    plt.ylabel("Warfarin-Associated Dosage Cost")
+    plt.xlim(np.min(steps), np.max(steps))
+    plt.legend()
+    if args.savepath is None:
+        plt.show()
+    else:
+        plt.savefig(
+            args.savepath, dpi=600, transparent=True, bbox_inches="tight"
         )
-        if np.mean(nmses) > np.mean(best_nmses):
-            best_nmses, best_hyperparams = nmses, params
-        results = [val for _, val in params.items()]
-        results += [np.mean(-1.0 * nmses), np.std(-1.0 * nmses, ddof=1)]
-        random_forest_results.append(results)
-    columns = names + ["cv_score_mean", "cv_score_std"]
-    pd.DataFrame(random_forest_results, columns=columns).to_csv(savepath)
-    return best_hyperparams, best_nmses
+    plt.close()
+    return
 
 
 if __name__ == "__main__":
-    model = RandomForestRegressor
-    savepath = f"./{str(model).split('.')[-1][:-2]}_hyperparams.csv"
-    search_hyperparams(model, savepath)
+    main()

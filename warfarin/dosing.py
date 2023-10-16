@@ -32,21 +32,10 @@ class WarfarinDose:
         """
         self.use_pharmacogenetic_algorithm = use_pharmacogenetic_algorithm
         self._enzyme_inducers = (
-            "Carbamazepine (Tegretol)_1.0",
-            "Phenytoin (Dilantin)_1.0",
-            "Rifampin or Rifampicin_1.0"
+            "Carbamazepine (Tegretol)",
+            "Phenytoin (Dilantin)",
+            "Rifampin or Rifampicin"
         )
-        self._age_in_decade = {
-            "Age_10 - 19": 1,
-            "Age_20 - 29": 2,
-            "Age_30 - 39": 3,
-            "Age_40 - 49": 4,
-            "Age_50 - 59": 5,
-            "Age_60 - 69": 6,
-            "Age_70 - 79": 7,
-            "Age_80 - 89": 8,
-            "Age_90+": 9,
-        }
         self._cyp2c9_consensus = [
             "CYP2C9 consensus_*1/*1",
             "CYP2C9 consensus_*1/*2",
@@ -94,13 +83,8 @@ class WarfarinDose:
                 )
             elif var == "bias":
                 dose += m
-            elif var == "Age":
-                for s, decade in self._age_in_decade.items():
-                    dose += X[s] * m * decade
-            elif var == "CYP2C9 consensus_unknown":
-                dose += m * np.logical_not(
-                    np.any(X[self._cyp2c9_consensus].to_numpy(), axis=-1)
-                )
+            elif var not in X.columns:
+                continue
             else:
                 dose += X[var] * m
         return np.square(np.array(dose))
@@ -133,7 +117,7 @@ class WarfarinDose:
             "Race (OMB)_Black or African American": -0.2760,
             "Race (OMB)_Unknown": -0.1032,
             self._enzyme_inducers: 1.1816,
-            "Amiodarone (Cordarone)_1.0": -0.5503
+            "Amiodarone (Cordarone)": -0.5503
         }
 
     @property

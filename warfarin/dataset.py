@@ -44,6 +44,7 @@ class WarfarinDataset:
 
         self.height = "Height (cm)"
         self.weight = "Weight (kg)"
+        self.age = "Age"
         self.race = "Race (OMB)"
         self.gender = "Gender"
         self.CYP2C9 = "CYP2C9 consensus"
@@ -54,25 +55,6 @@ class WarfarinDataset:
         self.did_reach_stable_dose = "Subject Reached Stable Dose of Warfarin"
         self.inr = "INR on Reported Therapeutic Dose of Warfarin"
         self.target_inr = "Estimated Target INR Range Based on Indication"
-        self.other_IWPC_parameters_categorical = [
-            "Age",
-            "Acetaminophen or Paracetamol (Tylenol)",
-            "Simvastatin (Zocor)",
-            "Atorvastatin (Lipitor)",
-            "Fluvastatin (Lescol)",
-            "Lovastatin (Mevacor)",
-            "Pravastatin (Pravachol)",
-            "Rosuvastatin (Crestor)",
-            "Sulfonamide Antibiotics",
-            "Macrolide Antibiotics",
-            "Amiodarone (Cordarone)",
-            "Carbamazepine (Tegretol)",
-            "Phenytoin (Dilantin)",
-            "Rifampin or Rifampicin",
-            "Current Smoker",
-            "CYP2C9 consensus",
-            "Imputed VKORC1",
-        ]
         self.thresh = 315  # Threshold for extreme weekly warfarin dose.
 
         with open(os.path.join(self.root, "metadata.json"), "rb") as f:
@@ -111,11 +93,13 @@ class WarfarinDataset:
         self.train, model_h, model_w = self._impute_heights_and_weights(
             self.train, None, None
         )
+        self.train = self.train.fillna(0)
 
         self.test = self.dataset.iloc[self.test]
         self.test, _, _ = self._impute_heights_and_weights(
             self.test, model_h, model_w
         )
+        self.test = self.test.fillna(0)
 
         return
 
@@ -133,7 +117,11 @@ class WarfarinDataset:
         )
         # Drop any patients where either the race or gender are missing.
         self.dataset.dropna(
-            subset=[self.race, self.gender], how="any", inplace=True
+            subset=[self.race, self.gender, self.age], how="any", inplace=True
+        )
+        # Convert ages to decades.
+        self.dataset[self.age] = np.array(
+            [int(x[0]) for x in self.dataset[self.age]]
         )
         # Impute target INRs.
         self._impute_target_INR()
@@ -149,14 +137,10 @@ class WarfarinDataset:
         ]
         self.dataset.drop(old_VKORC1, axis=1, inplace=True)
         # Convert the race and gender variables to one-hot encodings.
-        self.dataset = pd.get_dummies(
-            self.dataset, columns=[self.race, self.gender]
-        )
+        self.dataset = pd.get_dummies(self.dataset, columns=[self.race])
+        self.dataset["Gender"] = self.dataset["Gender"] == "male"
         self.races = [
             key for key in self.dataset.keys() if key.startswith(self.race)
-        ]
-        self.genders = [
-            key for key in self.dataset.keys() if key.startswith(self.gender)
         ]
         # Drop unuseable rows that are missing essential data points.
         self.dataset.dropna(
@@ -176,23 +160,11 @@ class WarfarinDataset:
             self.dataset[self.CYP2C9].isna(), self.CYP2C9
         ] = "Unknown"
         # Exclude extreme warfarin doses.
-        self.dataset = self.dataset[
-            self.dataset[self.dose] < self.thresh
-        ]
-        # Replace the remaining NaN values with 0.
-        cols = self.columns
-        cols.remove(self.height)
-        cols.remove(self.weight)
-        zero_mask = pd.DataFrame(
-            np.zeros((len(self.dataset), len(cols))), columns=cols
-        )
-        self.dataset = self.dataset.fillna(zero_mask)
+        self.dataset = self.dataset[self.dataset[self.dose] < self.thresh]
         # Convert the remaining categorical variables to one-hot encodings.
         self.dataset = pd.get_dummies(
-            self.dataset, columns=self.other_IWPC_parameters_categorical
+            self.dataset, columns=[self.CYP2C9, self.VKORC1]
         )
-
-        self.dataset = self.dataset[self.dataset["Age_0.0"] == False]
 
     @property
     def train_dataset(self) -> Tuple[pd.DataFrame, pd.Series]:
@@ -206,12 +178,7 @@ class WarfarinDataset:
         """
         return (
             self.train.drop(
-                [
-                    self.inr,
-                    self.target_inr,
-                    self.did_reach_stable_dose,
-                    "Age_0.0"
-                ],
+                [self.inr, self.target_inr, self.did_reach_stable_dose],
                 axis=1
             ),
             self.train[self.dose]
@@ -229,12 +196,7 @@ class WarfarinDataset:
         """
         return (
             self.test.drop(
-                [
-                    self.inr,
-                    self.target_inr,
-                    self.did_reach_stable_dose,
-                    "Age_0.0"
-                ],
+                [self.inr, self.target_inr, self.did_reach_stable_dose],
                 axis=1
             ),
             self.test[self.dose]
@@ -269,19 +231,19 @@ class WarfarinDataset:
 
         pred_h = data[data[self.height].isnull()]
         pred_h = pred_h.drop(self.height, axis=1)
-        pred_h = pred_h[[self.weight] + self.races + self.genders]
+        pred_h = pred_h[[self.weight] + self.races + [self.gender]]
         if model_h is None:
             X_h, y_h = train.drop(self.height, axis=1), train[self.height]
-            X_h = X_h[[self.weight] + self.races + self.genders]
+            X_h = X_h[[self.weight] + self.races + [self.gender]]
             model_h = LinearRegression()
             model_h.fit(X_h, y_h)
 
         pred_w = data[data[self.weight].isnull()]
         pred_w = pred_w.drop(self.weight, axis=1)
-        pred_w = pred_w[[self.height] + self.races + self.genders]
+        pred_w = pred_w[[self.height] + self.races + [self.gender]]
         if model_w is None:
             X_w, y_w = train.drop(self.weight, axis=1), train[self.weight]
-            X_w = X_w[[self.height] + self.races + self.genders]
+            X_w = X_w[[self.height] + self.races + [self.gender]]
             model_w = LinearRegression()
             model_w.fit(X_w, y_w)
 

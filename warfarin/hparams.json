@@ -1,0 +1,23 @@
+{
+  "DecisionTreeRegressor": {
+    "max_depth": null,
+    "min_samples_split": 4,
+    "min_samples_leaf": 1,
+    "max_leaf_nodes": 64,
+    "p": 0.25
+  },
+  "Lasso": {
+    "alpha": 0.001,
+    "max_iter": 1000000,
+    "p": 0.5
+  },
+  "MLPRegressor": {
+    "hidden_layer_sizes": [128, 128],
+    "batch_size": 16,
+    "max_iter": 500,
+    "learning_rate_init": 0.001,
+    "early_stopping": true,
+    "random_state": 42,
+    "p": 0.5
+  }
+}
