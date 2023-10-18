@@ -49,12 +49,12 @@ class Sampler(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def feedback(self, cost: np.ndarray) -> None:
+    def feedback(self, loss: np.ndarray) -> None:
         """
         Keeps track of the best generated warfarin doses for each patient based
         on an input updated metric.
         Input:
-            cost: predicted cost of the most recently generated warfarin dose.
+            loss: predicted loss of the most recently generated warfarin dose.
         Returns:
             None.
         """
@@ -88,14 +88,14 @@ class RandomSampler(Sampler):
             min_z_dose: minimum warfarin dose (after normalization is applied).
             max_z_dose: maximum warfarin dose (after normalization is applied).
             seed: random seed. Default 42.
-            save_best_on_reset: whether to save the best costs on reset.
+            save_best_on_reset: whether to save the best losses on reset.
         """
         self.min_z_dose, self.max_z_dose = min_z_dose, max_z_dose
         self.seed = seed
         self.save_best_on_reset = save_best_on_reset
         self.rng = np.random.RandomState(seed=self.seed)
         self.dose_key = "Therapeutic Dose of Warfarin"
-        self.arg_best, self.best_cost, self.cache = None, None, []
+        self.arg_best, self.best_loss, self.cache = None, None, []
 
     def __call__(self, X: pd.DataFrame) -> pd.DataFrame:
         X = X.copy()
@@ -108,18 +108,18 @@ class RandomSampler(Sampler):
 
     def reset(self) -> None:
         if self.save_best_on_reset:
-            self.best_cost, self.cache = self.optimum(), [self.optimum()]
+            self.best_loss, self.cache = self.optimum(), [self.optimum()]
             self.arg_best = np.zeros(len(self.arg_best), dtype=int)
             return
-        self.arg_best, self.best_cost, self.cache = None, None, []
+        self.arg_best, self.best_loss, self.cache = None, None, []
 
-    def feedback(self, cost: np.ndarray) -> None:
-        if self.arg_best is None or self.best_cost is None:
-            self.best_cost = cost
-            self.arg_best = np.zeros_like(cost, dtype=int)
+    def feedback(self, loss: np.ndarray) -> None:
+        if self.arg_best is None or self.best_loss is None:
+            self.best_loss = loss
+            self.arg_best = np.zeros_like(loss, dtype=int)
             return
         self.arg_best = np.where(
-            cost < self.best_cost, len(self) - 1, self.arg_best
+            loss < self.best_loss, len(self) - 1, self.arg_best
         )
 
     def optimum(self) -> np.ndarray:

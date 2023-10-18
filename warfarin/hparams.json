@@ -19,5 +19,22 @@
     "early_stopping": true,
     "random_state": 42,
     "p": 0.5
+  },
+  "SourceCritic": {
+    "model": {
+      "in_dim": 33,
+      "hidden_dims": [128, 128],
+      "out_dim": 1,
+      "dropout": 0.1,
+      "final_activation": null
+    },
+    "optimizer": {
+      "lr": 0.0001,
+      "weight_decay": 1e-6,
+      "maximize": true
+    }
+  },
+  "WeightClipper": {
+    "c": 0.01
   }
 }

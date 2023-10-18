@@ -22,13 +22,13 @@ from typing import Optional, Sequence, Tuple, Union
 class WarfarinDataset:
     def __init__(
         self,
-        root: Union[Path, str] = "./data",
+        root: Union[Path, str] = "./warfarin/data",
         train_test_split: Tuple[float] = (0.8, 0.2),
         seed: int = 42
     ):
         """
         Args:
-            root: directory path. Default `./data/warfarin`.
+            root: directory path. Default `./warfarin/data`.
             train_test_split: fraction of data to be allocated for each
                 of the training and test splits, respectively.
             seed: random seed. Default 42.
