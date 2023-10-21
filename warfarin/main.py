@@ -13,16 +13,18 @@ import numpy as np
 import sys
 import torch
 import torch.optim as optim
+import warnings
 from tqdm import tqdm
 
 sys.path.append(".")
+warnings.warn = lambda *args, **kwargs: None
 from warfarin.cost import dosage_cost
 from warfarin.dataset import WarfarinDataset
 from warfarin.dosing import WarfarinDose
 from warfarin.sampler import RandomSampler
 from warfarin.transform import PowerNormalizeTransform
 from warfarin.metrics import Divergence, SupportCoverage
-from warfarin.lipschitz import FrozenMLPRegressor
+from warfarin.lipschitz import FrozenMLPRegressor, Lipschitz
 from models.fcnn import FCNN
 from models.critic import WeightClipper
 from experiment.utility import get_device
@@ -65,8 +67,8 @@ def build_args() -> argparse.Namespace:
     parser.add_argument(
         "--num_epochs",
         type=int,
-        default=200,
-        help="Number of batches to sample and optimizer over. Default 500."
+        default=100,
+        help="Number of batches to sample and optimizer over. Default 100."
     )
     parser.add_argument(
         "--patience",
@@ -99,6 +101,19 @@ def build_args() -> argparse.Namespace:
         help="Maximum safe warfarin dose in units of mg/week. Default 315."
     )
     parser.add_argument(
+        "--cost_lipschitz_mode",
+        type=str,
+        choices=("local", "global", None),
+        default=None,
+        help="Algorithm for calculating the Lipschitz constant of the cost."
+    )
+    parser.add_argument(
+        "--num_in_distribution",
+        type=int,
+        default=16,
+        help="Number of in-distribution samples used to estimate OOD distance."
+    )
+    parser.add_argument(
         "--batch_size", type=int, default=16, help="Batch size. Default 16."
     )
     parser.add_argument(
@@ -119,6 +134,7 @@ def main():
     dataset = WarfarinDataset(seed=args.seed)
     dose = WarfarinDose()
     f = FrozenMLPRegressor(args.surrogate_cost)
+    f_lipchitz = Lipschitz(f, args.cost_lipschitz_mode, p=2)
     with open(args.hparams, "rb") as fl:
         hparams = json.load(fl)
         clipper_hparams = hparams["WeightClipper"]
@@ -136,6 +152,7 @@ def main():
     critic_optimizer = optim.Adam(
         critic.parameters(), **critic_hparams["optimizer"]
     )
+    critic_lipschitz = Lipschitz(critic, mode="global")
 
     col_transforms = {}
     for col in [dataset.height, dataset.weight, dataset.dose]:
@@ -163,14 +180,34 @@ def main():
                 t_X = torch.from_numpy(X.to_numpy().astype(np.float32))
                 loss -= 10 * alpha * torch.mean(critic(t_X.to(device))).item()
             loss += (1.0 - alpha) * f(policy(X))
+
             for _ in range(args.batch_size):
                 policy.feedback(loss)
             optimal_doses = policy.optimum()
             X[policy.dose_key] = optimal_doses
             policy.reset()
 
+            # Calculate relevant Lipschitz constants.
+            with warnings.catch_warnings():
+                warnings.simplefilter(action="ignore", category=FutureWarning)
+                L = f_lipchitz(
+                    torch.from_numpy(X.to_numpy().astype(np.float32))
+                )
+                K = critic_lipschitz()
+            # Estimate the Wasserstein distance between points.
+            P = X_test.sample(
+                n=args.num_in_distribution, random_state=rng, replace=False
+            )
+            P = torch.from_numpy(P.to_numpy().astype(np.float32)).to(device)
+            Q = torch.from_numpy(X.to_numpy().astype(np.float32)).to(device)
+            Wd = np.squeeze(
+                (torch.mean(critic(P)) - critic(Q)).detach().cpu().numpy()
+            )
+            # Calculate the correction factor.
+            df = (L.detach().cpu().numpy() / K) * np.maximum(Wd, 0.0)
+
             # Calculate statistics.
-            pred_costs = transform.invert(np.squeeze(f(X)))
+            pred_costs = transform.invert(np.squeeze(f(X) + df))
             cost = np.mean(pred_costs)
             preds.append((cost, np.std(pred_costs, ddof=1)))
 

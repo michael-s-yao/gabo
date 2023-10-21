@@ -78,7 +78,7 @@ class Lipschitz(nn.Module):
     def __init__(
         self,
         model: nn.Module,
-        mode: str = "global",
+        mode: Optional[str] = "global",
         p: int = torch.inf,
         eps: float = 0.1
     ):
@@ -86,16 +86,16 @@ class Lipschitz(nn.Module):
         Args:
             model: neural network to compute an upper bound on the Lipschitz
                 constant of.
-            mode: one of [`global`, `local`]
+            mode: one of [`global`, `local`, None].
         """
         super().__init__()
         self.model = model
-        self.mode = mode.lower()
+        self.mode = mode
         if self.mode not in ["global", "local"]:
             raise NotImplementedError(f"Unreocgnized mode {mode}.")
         elif self.mode == "global":
             self._lipshitz = self._global_lipschitz
-        else:
+        elif self.mode == "local":
             self._lipshitz = self._local_lipschitz
         self.p = p
         self.eps = eps
@@ -108,6 +108,8 @@ class Lipschitz(nn.Module):
         Returns:
             The estimated upper bound of the Lipschitz constant(s).
         """
+        if self.mode is None:
+            return torch.zeros(X.size(dim=0)).to(X)
         return self._lipshitz(X)
 
     def _local_lipschitz(self, X: torch.Tensor) -> torch.Tensor:
@@ -136,7 +138,8 @@ class Lipschitz(nn.Module):
         """
         return np.prod([
             self._spectral_norm(param)
-            for name, param in model.named_parameters() if "weight" in name
+            for name, param in self.model.named_parameters()
+            if "weight" in name
         ])
 
     def _spectral_norm(self, W: torch.Tensor, num_iter: int = 100) -> float:
@@ -148,7 +151,7 @@ class Lipschitz(nn.Module):
         Returns:
             The estimated spectral norm of the input matrix.
         """
-        b_k = torch.randn(W.size(dim=-1))
+        b_k = torch.randn(W.size(dim=-1)).to(W)
         for _ in range(num_iter):
             b_k1 = torch.squeeze(W.T @ W @ b_k)
             b_k = b_k1 / torch.norm(b_k1, p=self.p)

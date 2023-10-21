@@ -59,10 +59,10 @@ class WarfarinDataset:
 
         with open(os.path.join(self.root, "metadata.json"), "rb") as f:
             self.metadata = json.load(f)
-        self.dataset = pd.ExcelFile(
+        with pd.ExcelFile(
             os.path.join(self.root, self.metadata["dataset"])
-        )
-        self.dataset = self.dataset.parse("Subject Data")[self.columns]
+        ) as xls:
+            self.dataset = pd.read_excel(xls, "Subject Data")[self.columns]
 
         self._prune()
 
