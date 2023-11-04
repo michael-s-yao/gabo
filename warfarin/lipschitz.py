@@ -91,8 +91,8 @@ class Lipschitz(nn.Module):
         super().__init__()
         self.model = model
         self.mode = mode
-        if self.mode not in ["global", "local"]:
-            raise NotImplementedError(f"Unreocgnized mode {mode}.")
+        if self.mode not in ["global", "local", None]:
+            raise NotImplementedError(f"Unrecognized mode {mode}.")
         elif self.mode == "global":
             self._lipshitz = self._global_lipschitz
         elif self.mode == "local":
@@ -100,7 +100,9 @@ class Lipschitz(nn.Module):
         self.p = p
         self.eps = eps
 
-    def forward(self, X: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self, X: Optional[torch.Tensor] = None
+    ) -> Union[np.ndarray, float]:
         """
         Computes an upper bound on the Lipschitz constant.
         Input:
@@ -109,10 +111,10 @@ class Lipschitz(nn.Module):
             The estimated upper bound of the Lipschitz constant(s).
         """
         if self.mode is None:
-            return torch.zeros(X.size(dim=0)).to(X)
+            return torch.zeros(X.size(dim=0)).to(X).detach().cpu().numpy()
         return self._lipshitz(X)
 
-    def _local_lipschitz(self, X: torch.Tensor) -> torch.Tensor:
+    def _local_lipschitz(self, X: torch.Tensor) -> np.ndarray:
         """
         Computes an upper bound on the local Lipschitz constant at the input.
         Input:
@@ -126,9 +128,9 @@ class Lipschitz(nn.Module):
         Lb, Ub = model.compute_jacobian_bounds(X)
         Lb, Ub = Lb.reshape(*X.size()), Ub.reshape(*X.size())
         Mb = torch.maximum(torch.abs(Lb), torch.abs(Ub))
-        return torch.norm(Mb, p=self.p, dim=-1).detach()
+        return torch.norm(Mb, p=self.p, dim=-1).detach().cpu().numpy()
 
-    def _global_lipschitz(self, *args, **kwargs) -> torch.Tensor:
+    def _global_lipschitz(self, *args, **kwargs) -> float:
         """
         Computes an upper bound on the global Lipschitz constant of the model.
         Input:

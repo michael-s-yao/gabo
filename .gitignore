@@ -120,3 +120,5 @@ data/molecules/train_selfie
 data/molecules/val_selfie
 data/molecules/test_selfie
 warfarin/data/*.xls
+selfies_vae/data/
+selfies_vae/state_dict/

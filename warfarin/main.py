@@ -14,17 +14,20 @@ import sys
 import torch
 import torch.optim as optim
 import warnings
+from scipy.stats import ttest_rel
 from tqdm import tqdm
 
 sys.path.append(".")
 warnings.warn = lambda *args, **kwargs: None
 from warfarin.cost import dosage_cost
+from warfarin.correction import ObjectiveCorrection
 from warfarin.dataset import WarfarinDataset
 from warfarin.dosing import WarfarinDose
 from warfarin.sampler import RandomSampler
 from warfarin.transform import PowerNormalizeTransform
 from warfarin.metrics import Divergence, SupportCoverage
 from warfarin.lipschitz import FrozenMLPRegressor, Lipschitz
+from models.anneal import build_schedule
 from models.fcnn import FCNN
 from models.critic import WeightClipper
 from experiment.utility import get_device
@@ -42,7 +45,7 @@ def build_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--alpha",
-        type=float,
+        type=str,
         required=True,
         help="Relative source critic regularization weighting."
     )
@@ -85,13 +88,13 @@ def build_args() -> argparse.Namespace:
     parser.add_argument(
         "--min_z_dose",
         type=float,
-        default=-2.0,
+        default=-10.0,
         help="Minimum warfarin dose to search over in normalized units."
     )
     parser.add_argument(
         "--max_z_dose",
         type=float,
-        default=2.0,
+        default=10.0,
         help="Maximum warfarin dose to search over in normalized units."
     )
     parser.add_argument(
@@ -167,26 +170,16 @@ def main():
     policy = RandomSampler(
         min_z_dose=min_z_dose, max_z_dose=max_z_dose, seed=args.seed
     )
-    X, alpha = X_test.copy(), min(max(args.alpha, 0.0), 1.0)
+    X, alpha = X_test.copy(), build_schedule(args.alpha)
+    df = ObjectiveCorrection(X_test, args.num_in_distribution, rng, device)
     best_cost, best_epoch = 1e12, None
     preds, gts = [], []
+    if args.cost_lipschitz_mode is not None:
+        preds_f_components, preds_df_components = [], []
     with tqdm(
         range(args.num_epochs), desc="Optimizing Warfarin Dose", leave=False
     ) as pbar:
         for i, _ in enumerate(pbar):
-            # Sample according to the policy.
-            loss = 0.0
-            if i > 0:
-                t_X = torch.from_numpy(X.to_numpy().astype(np.float32))
-                loss -= 10 * alpha * torch.mean(critic(t_X.to(device))).item()
-            loss += (1.0 - alpha) * f(policy(X))
-
-            for _ in range(args.batch_size):
-                policy.feedback(loss)
-            optimal_doses = policy.optimum()
-            X[policy.dose_key] = optimal_doses
-            policy.reset()
-
             # Calculate relevant Lipschitz constants.
             with warnings.catch_warnings():
                 warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -194,20 +187,39 @@ def main():
                     torch.from_numpy(X.to_numpy().astype(np.float32))
                 )
                 K = critic_lipschitz()
-            # Estimate the Wasserstein distance between points.
-            P = X_test.sample(
-                n=args.num_in_distribution, random_state=rng, replace=False
-            )
-            P = torch.from_numpy(P.to_numpy().astype(np.float32)).to(device)
-            Q = torch.from_numpy(X.to_numpy().astype(np.float32)).to(device)
-            Wd = np.squeeze(
-                (torch.mean(critic(P)) - critic(Q)).detach().cpu().numpy()
-            )
-            # Calculate the correction factor.
-            df = (L.detach().cpu().numpy() / K) * np.maximum(Wd, 0.0)
+
+            # Sample according to the policy.
+            for _ in range(args.batch_size):
+                loss = 0.0
+                if i > 0:
+                    t_X = torch.from_numpy(X.to_numpy().astype(np.float32)).to(
+                        device
+                    )
+                    loss -= 10 * alpha() * torch.mean(critic(t_X)).item()
+                X = policy(X)
+                loss += (1.0 - alpha()) * (f(X) + df(X, critic, K, L))
+                policy.feedback(loss)
+
+            optimal_doses = policy.optimum()
+            X[policy.dose_key] = optimal_doses
+            policy.reset()
 
             # Calculate statistics.
-            pred_costs = transform.invert(np.squeeze(f(X) + df))
+            f_component, df_component = f(X), df(X, critic, K, L)
+            pred_costs = transform.invert(
+                np.squeeze(f_component + df_component)
+            )
+            if args.cost_lipschitz_mode is not None:
+                costs_f_component = transform.invert(np.squeeze(f_component))
+                costs_df_component = transform.invert(np.squeeze(df_component))
+                preds_f_components.append((
+                    np.mean(costs_f_component),
+                    np.std(costs_f_component, ddof=1)
+                ))
+                preds_df_components.append((
+                    np.mean(costs_df_component),
+                    np.std(costs_df_component, ddof=1)
+                ))
             cost = np.mean(pred_costs)
             preds.append((cost, np.std(pred_costs, ddof=1)))
 
@@ -248,6 +260,9 @@ def main():
                 num_steps += 1
             pbar.set_postfix(wasserstein=Dw.item(), cost=cost)
             critic_clipper(critic)
+            alpha.step()
+
+    print(ttest_rel(pred_costs, gt_costs))
 
     print("Surrogate Cost:", preds[-1][0], preds[-1][1] / np.sqrt(len(X_test)))
     print("Oracle Cost:", gts[-1][0], gts[-1][1] / np.sqrt(len(X_test)))
@@ -265,14 +280,35 @@ def main():
         np.array([mean for mean, _ in gts]),
         np.array([std for _, std in gts]) / np.sqrt(len(X_test))
     )
+    if args.cost_lipschitz_mode is not None:
+        preds_f_components = (
+            np.array([mean for mean, _ in preds_f_components]),
+            np.array([std for _, std in preds_f_components]) / np.sqrt(
+                len(X_test)
+            )
+        )
+        preds_df_components = (
+            np.array([mean for mean, _ in preds_df_components]),
+            np.array([std for _, std in preds_df_components]) / np.sqrt(
+                len(X_test)
+            )
+        )
     plt.figure(figsize=(10, 5))
     steps = args.batch_size * np.arange(len(preds[0]))
-    for (mean, std), label in zip([preds, gts], ["Surrogate", "Oracle"]):
+    for (mean, sem), label in zip([preds, gts], ["Surrogate", "Oracle"]):
         plt.plot(steps, mean, label=label)
-        plt.fill_between(steps, mean - std, mean + std, alpha=0.1)
+        plt.fill_between(steps, mean - sem, mean + sem, alpha=0.1)
+    if args.cost_lipschitz_mode is not None and False:
+        for (mean, sem), label in zip(
+            [preds_f_components, preds_df_components],
+            ["Surrogate (Uncorrected)", "Surrogate (Correction Term)"]
+        ):
+            plt.plot(steps, mean, label=label)
+            plt.fill_between(steps, mean - sem, mean + sem, alpha=0.1)
     plt.xlabel("Optimization Steps")
     plt.ylabel("Warfarin-Associated Dosage Cost")
     plt.xlim(np.min(steps), np.max(steps))
+    plt.ylim(0, 1000)
     plt.legend()
     if args.savepath is None:
         plt.show()

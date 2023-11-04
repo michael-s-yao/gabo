@@ -24,7 +24,7 @@ def Block(
         out_dim: number of output dimensions.
         normalize: whether to apply batch normalization.
         activation: activation function. One of [`LeakyReLU`, `Tanh`,
-            `Sigmoid`, None].
+            `Sigmoid`, `ReLU`, None].
     Output:
         Layer consisting of a linear transformation, optional batch
             normalization, and activation.
@@ -36,6 +36,8 @@ def Block(
 
     if activation is None:
         pass
+    elif activation.lower() == "relu":
+        layer.append(nn.ReLU(inplace=False))
     elif activation.lower() == "leakyrelu":
         layer.append(nn.LeakyReLU(negative_slope=0.2, inplace=False))
     elif activation.lower() == "tanh":

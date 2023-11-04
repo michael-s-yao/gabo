@@ -20,7 +20,8 @@ class FCNN(nn.Module):
         out_dim: int,
         hidden_dims: Sequence[int],
         dropout: float = 0.1,
-        final_activation: Optional[str] = "Sigmoid"
+        final_activation: Optional[str] = "Sigmoid",
+        hidden_activation: str = "LeakyReLU"
     ):
         """
         Args:
@@ -30,11 +31,13 @@ class FCNN(nn.Module):
             dropout: dropout. Default 0.1.
             final_activation: final activation function. One of [`Sigmoid`,
                 `LeakyReLU`, None].
+            hidden_activation: hidden activation functions. One of [`ReLU`,
+                `LeakyReLU`].
         """
         super().__init__()
         layers, dims = [], [in_dim] + hidden_dims + [out_dim]
         for i in range(len(dims) - 1):
-            func = "LeakyReLU" if i < len(dims) - 2 else final_activation
+            func = hidden_activation if i < len(dims) - 2 else final_activation
             layers.append(
                 Block(dims[i], dims[i + 1], normalize=False, activation=func)
             )

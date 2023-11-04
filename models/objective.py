@@ -10,12 +10,14 @@ Adapted from Haydn Jones @haydn-jones molformers repo.
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import numpy as np
-from pathlib import Path
+import sys
 import torch
 import torch.nn as nn
 import torchmetrics.functional.image as F
+from pathlib import Path
 from typing import Dict, Tuple, Union
 
+sys.path.append("MolOOD")
 from MolOOD.molformers.models.BaseRegressor import BaseRegressor
 
 
@@ -57,7 +59,21 @@ class SELFIESObjective(nn.Module):
         """
         super().__init__()
         self.vocab = vocab
-        self.start, self.stop = "[start]", "[stop]"
+        self.start, self.stop, self.pad = "[start]", "[stop]", "[pad]"
+        start_found, stop_found, pad_found = False, False, False
+        for token in self.vocab.keys():
+            if "start" in token.lower():
+                self.start, start_found = token, True
+            if "stop" in token.lower():
+                self.stop, stop_found = token, True
+            if "pad" in token.lower():
+                self.pad, pad_found = token, True
+        if not start_found:
+            self.vocab[self.start] = 0
+        if not stop_found:
+            self.vocab[self.stop] = 1
+        if not pad_found:
+            self.vocab[self.pad] = len(self.vocab.keys())
         self.model = BaseRegressor(
             self.vocab,
             d_enc=encoder_dim,

@@ -1,0 +1,10 @@
+{
+  "batch_size": 128,
+  "hidden_dims": [256, 128, 64, 32],
+  "dropout": 0.1,
+  "optimizer": "Adam",
+  "weight_decay": 1e-6,
+  "lr": 0.001,
+  "num_epochs": 10,
+  "patience": 20
+}
