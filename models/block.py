@@ -40,6 +40,8 @@ def Block(
         layer.append(nn.ReLU(inplace=False))
     elif activation.lower() == "leakyrelu":
         layer.append(nn.LeakyReLU(negative_slope=0.2, inplace=False))
+    elif activation.lower() == "gelu":
+        layer.append(nn.GELU())
     elif activation.lower() == "tanh":
         layer.append(nn.Tanh())
     elif activation.lower() == "sigmoid":

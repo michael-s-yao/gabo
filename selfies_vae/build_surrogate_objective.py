@@ -56,6 +56,7 @@ def build_objective(
         ),
         strict=True
     )
+    vae = vae.to(device)
     vae.eval()
 
     objective = MoleculeObjective("logP")
@@ -65,8 +66,9 @@ def build_objective(
         hidden_dims=hparams["hidden_dims"],
         dropout=hparams["dropout"],
         final_activation=None,
-        hidden_activation="ReLU"
+        hidden_activation="GELU"
     )
+    surrogate = surrogate.to(device)
     if hparams["optimizer"].title() == "Adam":
         optimizer = optim.Adam(
             surrogate.parameters(),
@@ -75,7 +77,7 @@ def build_objective(
         )
     elif hparams["optimizer"].upper() == "SGD":
         optimizer = optim.SGD(
-            surrogate.params(),
+            surrogate.parameters(),
             hparams["lr"],
             weight_decay=hparams["weight_decay"],
             momentum=0.9,
@@ -111,7 +113,7 @@ def build_objective(
                 else:
                     y = [cache[smi] for smi in smiles]
 
-                y = torch.tensor(y).to(z)
+                y = torch.tensor(y).to(device)
                 loss = mse_loss(torch.squeeze(surrogate(z), dim=-1), y)
                 loss.backward()
                 pbar.set_postfix(train_loss=loss.item(), val_loss=val_loss)
@@ -120,7 +122,7 @@ def build_objective(
         surrogate.eval()
         val_loss = []
         for mol in tqdm(dm.val_dataloader(), desc="Validating", leave=False):
-            z = vae(mol)["z"].reshape(-1, vae.encoder_embedding_dim)
+            z = vae(mol.to(device))["z"].reshape(-1, vae.encoder_embedding_dim)
             z = torch.squeeze(z, dim=0).detach()
             smiles = [
                 sf.decoder(m) for m in [dm.train.decode(tok) for tok in mol]
@@ -131,18 +133,20 @@ def build_objective(
                     cache[smi] = val
             else:
                 y = [cache[smi] for smi in smiles]
-            y = torch.tensor(y).to(z)
+            y = torch.tensor(y).to(device)
             val_loss.append(
                 mse_loss(torch.squeeze(surrogate(z), dim=-1), y).item()
             )
         val_loss = sum(val_loss) / len(val_loss)
         if val_loss < best_loss:
             best_loss, best_epoch = val_loss, epoch
-            torch.save(surrogate.state_dict(), f"./ckpts/{epoch}_surrogate.pt")
+            torch.save(
+                surrogate.state_dict(),
+                f"./selfies_vae/ckpts/{epoch}_surrogate.pt"
+            )
         if epoch - best_epoch > hparams["patience"] > 0:
             break
-
-        if not loaded_cache:
+        if not loaded_cache and epoch == 0:
             with open(cache_fn, "wb") as f:
                 pickle.dump(cache, f)
 

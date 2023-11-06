@@ -32,7 +32,7 @@ class FCNN(nn.Module):
             final_activation: final activation function. One of [`Sigmoid`,
                 `LeakyReLU`, None].
             hidden_activation: hidden activation functions. One of [`ReLU`,
-                `LeakyReLU`].
+                `LeakyReLU`, `GELU`].
         """
         super().__init__()
         layers, dims = [], [in_dim] + hidden_dims + [out_dim]
