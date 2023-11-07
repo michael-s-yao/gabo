@@ -122,30 +122,30 @@ class WGANModule(pl.LightningModule):
         Xp, _ = batch
         B, C, H, W = Xp.size()
         Xq = self(B)
-        optimizer_G, optimizer_D = self.optimizers()
+        optimizer_G, optimizer_C = self.optimizers()
 
-        self.toggle_optimizer(optimizer_D)
-        loss_D = torch.mean(self.critic(Xq.reshape(B, -1))) - torch.mean(
+        self.toggle_optimizer(optimizer_C)
+        loss_C = torch.mean(self.critic(Xq.reshape(B, -1))) - torch.mean(
             self.critic(Xp.reshape(B, -1))
         )
-        self.log("loss_D", loss_D, prog_bar=True, sync_dist=True)
-        self.manual_backward(loss_D, retain_graph=True)
+        self.log("loss_C", loss_C, prog_bar=True, sync_dist=True)
+        self.manual_backward(loss_C, retain_graph=True)
         if self.hparams.clip:
             self.clip_gradients(
-                optimizer_D,
+                optimizer_C,
                 gradient_clip_val=self.hparams.clip,
                 gradient_clip_algorithm="norm"
             )
-        optimizer_D.step()
+        optimizer_C.step()
         self.critic_clipper(self.critic)
-        optimizer_D.zero_grad()
-        self.untoggle_optimizer(optimizer_D)
+        optimizer_C.zero_grad()
+        self.untoggle_optimizer(optimizer_C)
 
         if batch_idx % self.hparams.n_critic_per_generator:
             return
 
         self.toggle_optimizer(optimizer_G)
-        if self.hparams.num_images_logged and self.logger:
+        if self.hparams.num_images_logged and self.logger and batch_idx == 0:
             self.logger.log_image(
                 "generated_images",
                 images=[
@@ -156,7 +156,7 @@ class WGANModule(pl.LightningModule):
         Xq = Xq.detach()
         loss_G = (alpha_ - 1.0) * self.surrogate(Xq.reshape(B, -1))
         loss_G += alpha_ * (
-            torch.mean(self.critic(Xp.reshape(B, -1)).detach()) - self.critic(
+            torch.mean(self.critic(Xp.reshape(B, -1))) - self.critic(
                 Xq.reshape(B, -1)
             )
         )
@@ -171,6 +171,7 @@ class WGANModule(pl.LightningModule):
             )
         optimizer_G.step()
         optimizer_G.zero_grad()
+        self.surrogate.zero_grad()
         self.untoggle_optimizer(optimizer_G)
 
     def validation_step(
@@ -192,13 +193,13 @@ class WGANModule(pl.LightningModule):
             Xq.reshape(B, -1)
         )
         self.log(
-            "val_wasserstein", torch.mean(Wd), prog_bar=False, sync_dist=True
+            "val_wasserstein", torch.mean(Wd), prog_bar=True, sync_dist=True
         )
 
         alpha_ = self.alpha(Xq)
         obj = self.surrogate(Xq.reshape(B, -1))
         loss_G = ((alpha_ - 1.0) * obj) + (alpha_ * Wd)
-        self.log("val_obj", torch.mean(obj), prog_bar=False, sync_dist=True)
+        self.log("val_obj", torch.mean(obj), prog_bar=True, sync_dist=True)
         self.log(
             "val_loss_G", torch.mean(loss_G), prog_bar=True, sync_dist=True
         )

@@ -15,8 +15,8 @@ from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.loggers import WandbLogger
 
 sys.path.append(".")
-from data.mnist import MNISTDataModule
-from digits.generator import WGANModule
+from digits.data.mnist import MNISTDataModule
+from digits.wgan import WGANModule
 from experiment.utility import seed_everything
 
 
@@ -142,7 +142,8 @@ def main():
         logger=logger,
         deterministic=True,
         fast_dev_run=args.fast_dev_run,
-        strategy=strategy
+        strategy=strategy,
+        devices=[0]
     )
 
     trainer.fit(model, datamodule=dm)

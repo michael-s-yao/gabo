@@ -18,7 +18,7 @@ from typing import Optional, Union
 class MNISTDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        root: Union[Path, str] = "./data",
+        root: Union[Path, str] = "./digits/data",
         batch_size: int = 128,
         num_workers: int = os.cpu_count() // 2,
         seed: int = 42,

@@ -113,8 +113,8 @@ output/
 progress/
 
 # Datasets
-data/MNIST/
-data/__pycache__/
+digits/data/MNIST/
+digits/data/__pycache__/
 *.tar.gz
 data/molecules/train_selfie
 data/molecules/val_selfie
