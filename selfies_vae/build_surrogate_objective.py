@@ -40,6 +40,7 @@ def build_objective(
         seed: random seed. Default 42.
         plotpath: optional path to save the histogram plot to. Default None.
         savepath: optional path to save the model to. Default None.
+        device: device to run model training on. Default GPU.
     Returns:
         RMSE value on the test dataset.
     """

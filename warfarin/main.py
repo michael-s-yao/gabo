@@ -26,7 +26,7 @@ from warfarin.dosing import WarfarinDose
 from warfarin.sampler import RandomSampler
 from warfarin.transform import PowerNormalizeTransform
 from warfarin.metrics import Divergence, SupportCoverage
-from warfarin.lipschitz import FrozenMLPRegressor, Lipschitz
+from models.lipschitz import FrozenMLPRegressor, Lipschitz
 from models.anneal import build_schedule
 from models.fcnn import FCNN
 from models.critic import WeightClipper

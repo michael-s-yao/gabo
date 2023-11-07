@@ -21,7 +21,8 @@ class FCNN(nn.Module):
         hidden_dims: Sequence[int],
         dropout: float = 0.1,
         final_activation: Optional[str] = "Sigmoid",
-        hidden_activation: str = "LeakyReLU"
+        hidden_activation: str = "LeakyReLU",
+        use_batch_norm: bool = False
     ):
         """
         Args:
@@ -33,13 +34,19 @@ class FCNN(nn.Module):
                 `LeakyReLU`, None].
             hidden_activation: hidden activation functions. One of [`ReLU`,
                 `LeakyReLU`, `GELU`].
+            use_batch_norm: whether to apply batch normalization.
         """
         super().__init__()
         layers, dims = [], [in_dim] + hidden_dims + [out_dim]
         for i in range(len(dims) - 1):
             func = hidden_activation if i < len(dims) - 2 else final_activation
             layers.append(
-                Block(dims[i], dims[i + 1], normalize=False, activation=func)
+                Block(
+                    dims[i],
+                    dims[i + 1],
+                    normalize=use_batch_norm,
+                    activation=func
+                )
             )
             if i < len(dims) - 2 and dropout > 0.0:
                 layers.append(nn.Dropout(p=dropout))
