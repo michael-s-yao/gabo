@@ -7,9 +7,12 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import argparse
+import os
 import sys
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.strategies import DDPStrategy
+from pytorch_lightning.loggers import WandbLogger
 
 sys.path.append(".")
 from data.mnist import MNISTDataModule
@@ -84,6 +87,11 @@ def build_args() -> argparse.Namespace:
         help="Number of workers. Default 0."
     )
     parser.add_argument(
+        "--find_unused_parameters",
+        action="store_true",
+        help="Find unused parameters in distributed multi-GPU training."
+    )
+    parser.add_argument(
         "--fast_dev_run", action="store_true", help="Test code only."
     )
     parser.add_argument(
@@ -117,12 +125,24 @@ def main():
         )
     ]
 
+    logger = False
+    if not args.fast_dev_run and not args.disable_wandb:
+        logger = WandbLogger(
+            project=os.path.basename(os.path.dirname(__file__)),
+            log_model=True,
+        )
+        logger.log_hyperparams(args)
+    strategy = "auto"
+    if args.find_unused_parameters:
+        strategy = DDPStrategy(find_unused_parameters=True)
     trainer = pl.Trainer(
         max_epochs=args.num_epochs,
         accelerator=args.device,
         callbacks=callbacks,
+        logger=logger,
         deterministic=True,
-        fast_dev_run=args.fast_dev_run
+        fast_dev_run=args.fast_dev_run,
+        strategy=strategy
     )
 
     trainer.fit(model, datamodule=dm)

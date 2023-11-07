@@ -24,11 +24,13 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 import numpy as np
 import pandas as pd
 import pickle
+import sys
 import torch
 import torch.nn as nn
 from pathlib import Path
 from typing import Optional, Union
 
+sys.path.append("auto_LiRPA")
 from auto_LiRPA import BoundedModule, BoundedTensor, PerturbationLpNorm
 
 
