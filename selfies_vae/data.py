@@ -185,7 +185,7 @@ class SELFIESDataset(Dataset):
         """
         return torch.tensor([self.vocab2idx[s] for s in [*selfies, self.stop]])
 
-    def decode(self, tokens: torch.Tensor) -> Sequence[str]:
+    def decode(self, tokens: torch.Tensor) -> str:
         """
         Decodes an encoded SELFIES string back into a SELFIES string.
         Input:

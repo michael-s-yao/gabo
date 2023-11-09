@@ -100,7 +100,7 @@ class WGANModule(pl.LightningModule):
         """
         Calculates the value of alpha for regularization weighting.
         Input:
-            Xq: Generated images.
+            Xq: generated images.
         Returns:
             The value of alpha for regularization weighting.
         """

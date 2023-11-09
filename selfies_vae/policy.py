@@ -8,16 +8,22 @@ Author(s):
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
+import numpy as np
 import sys
 import torch
+import torch.nn as nn
+import torch.optim as optim
 import botorch
 import selfies as sf
-from pathlib import Path
+from tqdm import tqdm
 from typing import Sequence, Union
 from botorch.acquisition import qExpectedImprovement
 from botorch.optim import optimize_acqf
 
 sys.path.append(".")
+from models.fcnn import FCNN
+from models.lipschitz import Lipschitz
+from models.critic import WeightClipper
 from selfies_vae.data import SELFIESDataset
 from selfies_vae.vae import InfoTransformerVAE
 from selfies_vae.turbostate import TurboState
@@ -28,7 +34,7 @@ class BOPolicy:
 
     def __init__(
         self,
-        model: Union[Path, str],
+        vae: InfoTransformerVAE,
         device: torch.device = torch.device("cpu"),
         num_restarts: int = 10,
         raw_samples: int = 512,
@@ -36,23 +42,17 @@ class BOPolicy:
     ):
         """
         Args:
-            model: file path to trained transformer VAE state dict.
+            vae: trained transformer VAE autoencoder.
             device: device. Default CPU.
             num_restarts: number of starting points for multistart acquisition
                 function optimization.
             raw_samples: number of samples for initialization.
         """
-        self.model = model
         self.dataset = SELFIESDataset()
         self.device = device
         self.num_restarts = num_restarts
         self.raw_samples = raw_samples
-        self.vae = InfoTransformerVAE(self.dataset).to(self.device)
-        self.vae.load_state_dict(
-            torch.load(self.model, map_location=self.device), strict=True
-        )
-        self.vae.eval()
-        self.z_dim = self.vae.encoder_embedding_dim
+        self.vae = vae.to(self.device)
         self.cache = {}
         self.state = TurboState(**kwargs)
         self.init_region_size = 6
@@ -60,7 +60,7 @@ class BOPolicy:
     def __call__(
         self,
         model: botorch.models.model.Model,
-        X: torch.Tensor,
+        z: torch.Tensor,
         y: torch.Tensor,
         batch_size: int
     ) -> torch.Tensor:
@@ -69,21 +69,21 @@ class BOPolicy:
         optimization.
         Input:
             model: a single-task variational GP model.
-            X: input batch of encoded molecules.
-            y: objective values of the input batch of encoded molecules.
+            z: prior observations of encoded molecules.
+            y: objective values of the prior observations of encoded molecules.
             batch_size: number of candidates to return.
         """
-        X_center = X[torch.argmax(y), :].clone()
-        tr_lb = X_center - (self.init_region_size * self.state.length / 2)
-        tr_ub = X_center + (self.init_region_size * self.state.length / 2)
-        X_next, _ = optimize_acqf(
+        z_center = z[torch.argmax(y), :].clone()
+        tr_lb = z_center - (self.init_region_size * self.state.length / 2)
+        tr_ub = z_center + (self.init_region_size * self.state.length / 2)
+        z_next, _ = optimize_acqf(
             qExpectedImprovement(model, torch.max(y), maximize=True),
             bounds=torch.stack([tr_lb, tr_ub]),
             q=batch_size,
             num_restarts=self.num_restarts,
             raw_samples=self.raw_samples,
         )
-        return X_next
+        return z_next
 
     def update_state(self, y: torch.Tensor) -> None:
         """
@@ -91,7 +91,7 @@ class BOPolicy:
         Input:
             y: input objective values.
         Returns:
-            None.
+           None.
         """
         return self.state.update(y)
 
@@ -105,7 +105,7 @@ class BOPolicy:
             A list of decoded SMILES molecule representations.
         """
         sample = self.vae.sample(
-            z=z.reshape(-1, 2, self.z_dim // 2).to(
+            z=z.reshape(-1, 2, self.vae.encoder_embedding_dim // 2).to(
                 device=self.device, dtype=self.vae.dtype
             )
         )
@@ -146,3 +146,148 @@ class BOPolicy:
             Whether a restart has been triggered during the optimization.
         """
         return self.state.restart_triggered
+
+
+class BOAdversarialPolicy(BOPolicy):
+    def __init__(
+        self,
+        vae: InfoTransformerVAE,
+        alpha: Union[float, str],
+        surrogate: nn.Module,
+        device: torch.device = torch.device("cpu"),
+        num_restarts: int = 10,
+        raw_samples: int = 512,
+        critic_lr: float = 0.001,
+        critic_max_steps: int = 50,
+        critic_batch_size: int = 128,
+        critic_c: float = 0.1,
+        is_cost: bool = False,
+        verbose: bool = True,
+        seed: int = 42,
+        **kwargs
+    ):
+        """
+        Args:
+            vae: trained transformer VAE autoencoder.
+            alpha: a float between 0 and 1, or `Lipschitz` for our method.
+            device: device. Default CPU.
+            num_restarts: number of starting points for multistart acquisition
+                function optimization.
+            raw_samples: number of samples for initialization.
+            is_cost: whether objective is a cost to minimize. Default False.
+            verbose: whether to print verbose outputs to `stdout`.
+            seed: random seed. Default 42.
+        """
+        super().__init__(vae, device, num_restarts, raw_samples, **kwargs)
+        self.alpha_ = alpha
+        self.surrogate = surrogate
+        if self.alpha_.replace(".", "", 1).isnumeric():
+            self.alpha_ = float(self.alpha_)
+        self.critic_lr = critic_lr
+        self.critic_max_steps = critic_max_steps
+        self.critic_batch_size = critic_batch_size
+        self.critic_c = critic_c
+        self.is_cost = is_cost
+        self.verbose = verbose
+        self.seed = seed
+        self.rng = np.random.RandomState(seed=self.seed)
+        self.critic = FCNN(
+            in_dim=self.vae.encoder_embedding_dim,
+            out_dim=1,
+            hidden_dims=[1024, 256, 64],
+            dropout=0.0,
+            final_activation=None,
+            hidden_activation="ReLU"
+        )
+        self.clipper = WeightClipper(c=self.critic_c)
+        self.critic_optimizer = self.configure_critic_optimizers()
+        if isinstance(self.alpha, str):
+            self.L = Lipschitz(self.surrogate, mode="local", p=2)
+            self.K = Lipschitz(self.critic, mode="global")
+
+    def update_state(
+        self, y: torch.Tensor, z: torch.Tensor, ref_dataset: SELFIESDataset
+    ) -> None:
+        """
+        Updates the state internal variables given objective values y.
+        Input:
+            y: input objective values.
+            z: input molecules in the latent space of the encoder
+                corresponding to the input objective values.
+            ref_dataset: reference dataset of in-domain molecules.
+        Returns:
+           None.
+        """
+        alpha = self.alpha(z)
+        zref = self.reference_sample(ref_dataset, z.size(dim=0))
+        penalized_objective = ((1 - alpha) * y) + (
+            alpha * (torch.mean(self.critic(zref)) - self.critic(z))
+        )
+        return self.state.update(penalized_objective)
+
+    def alpha(self, Zq: torch.Tensor) -> Union[float, torch.Tensor]:
+        """
+        Calculates the value of alpha for regularization weighting.
+        Input:
+            Xq: generated molecules in the latent space of the encoder.
+        Returns:
+            The value(s) of alpha for regularization weighting.
+        """
+        if isinstance(self.alpha_, float):
+            return self.alpha_
+        if self.is_cost:
+            return 1.0 / (1.0 + (self.K() / self.L(Zq)))
+        return 1.0 / (1.0 - (self.K() / self.L(Zq)))
+
+    def update_critic(
+        self,
+        model: botorch.models.model.Model,
+        z: torch.Tensor,
+        y: torch.Tensor,
+        ref_dataset: SELFIESDataset
+    ) -> None:
+        """
+        Trains the source critic according to the allocated training budget.
+        Input:
+            model: a single-task variational GP model.
+            z: prior observations of encoded molecules.
+            y: objective values of the prior observations of encoded molecules.
+            ref_dataset: reference dataset of in-domain molecules.
+        Returns:
+            None.
+        """
+        for _ in tqdm(
+            range(self.critic_max_steps),
+            desc="Training Source Critic",
+            leave=False,
+            disable=(not self.verbose)
+        ):
+            Zp = self.reference_sample(ref_dataset, self.critic_batch_size)
+            Zq = self(model, z, y, batch_size=self.critic_batch_size)
+            self.critic.zero_grad()
+            negWd = torch.mean(self.critic(Zq)) - torch.mean(self.critic(Zp))
+            negWd.backward()
+            self.critic_optimizer.step()
+            self.clipper(self.critic)
+        return
+
+    def configure_critic_optimizers(self) -> optim.Optimizer:
+        return optim.SGD(self.critic.parameters(), lr=self.critic_lr)
+
+    def reference_sample(
+        self, ref_dataset: SELFIESDataset, num: int
+    ) -> torch.Tensor:
+        idxs = self.rng.choice(
+            len(ref_dataset), min(num, len(ref_dataset)), replace=False
+        )
+        Zp = [
+            self.vae(ref_dataset[int(i)].unsqueeze(dim=0).to(self.device))
+            for i in idxs
+        ]
+        return torch.cat(
+            [
+                out["z"].reshape(-1, self.vae.encoder_embedding_dim)
+                for out in Zp
+            ],
+            dim=0
+        )
