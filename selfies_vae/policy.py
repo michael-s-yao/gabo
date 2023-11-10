@@ -224,7 +224,10 @@ class BOAdversarialPolicy(BOPolicy):
         alpha = self.alpha(z)
         zref = self.reference_sample(ref_dataset, z.size(dim=0))
         penalized_objective = ((1 - alpha) * y) - (
-            alpha * (torch.mean(self.critic(zref)) - self.critic(z))
+            alpha * torch.maximum(
+                torch.mean(self.critic(zref)) - self.critic(z),
+                torch.zeros_like(y)
+            )
         )
         return self.state.update(penalized_objective)
 
