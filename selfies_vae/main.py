@@ -30,7 +30,7 @@ from selfies_vae.data import SELFIESDataset
 from selfies_vae.policy import BOAdversarialPolicy
 from selfies_vae.utils import MoleculeObjective
 from models.fcnn import FCNN
-from experiment.utility import seed_everything, get_device
+from experiment.utility import seed_everything
 
 
 def build_args() -> argparse.Namespace:
@@ -61,13 +61,10 @@ def build_args() -> argparse.Namespace:
         "--budget",
         type=int,
         default=1024,
-        help="Sampling budget. Default 1000. Use -1 for infinite budget."
+        help="Sampling budget. Default 1024. Use -1 for infinite budget."
     )
     parser.add_argument(
         "--batch_size", type=int, default=16, help="Batch size. Default 16."
-    )
-    parser.add_argument(
-        "--device", type=str, default="auto", help="Device. Default `auto`."
     )
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed. Default 42."
@@ -84,8 +81,8 @@ def build_args() -> argparse.Namespace:
 
 def main():
     args = build_args()
-    seed_everything(seed=args.seed)
-    device = get_device(args.device)
+    seed_everything(seed=args.seed, use_deterministic=False)
+    device = torch.device("cpu")
     warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=FutureWarning)
