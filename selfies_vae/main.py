@@ -109,11 +109,11 @@ def main():
         hidden_dims=surrogate_hparams["hidden_dims"],
         dropout=surrogate_hparams["dropout"],
         final_activation=None,
-        hidden_activation="GELU"
+        hidden_activation="ReLU"
     )
     surrogate.load_state_dict(
         torch.load(
-            os.path.join(os.path.dirname(__file__), "./ckpts/27_surrogate.pt")
+            os.path.join(os.path.dirname(__file__), "ckpts", "13_surrogate.pt")
         )
     )
     surrogate = surrogate.to(device=device, dtype=vae.dtype)

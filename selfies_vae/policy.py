@@ -238,7 +238,8 @@ class BOAdversarialPolicy(BOPolicy):
         """
         if isinstance(self.alpha_, float):
             return self.alpha_
-        return 1.0 / (1.0 + (self.K() / self.L(Zq)))
+        L = self.L(Zq)
+        return torch.from_numpy(L / (L + self.K())).to(Zq)
 
     def update_critic(
         self,

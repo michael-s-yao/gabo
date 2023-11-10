@@ -142,7 +142,7 @@ def plot_histogram(
 
 
 if __name__ == "__main__":
-    surrogate_path = "./selfies_vae/ckpts/27_surrogate.pt"
+    surrogate_path = "./selfies_vae/ckpts/13_surrogate.pt"
     savepath = "./selfies_vae/docs/surrogate_results.pkl"
     eval_surrogate(surrogate_path=surrogate_path, savepath=savepath)
     plot_histogram(
