@@ -88,6 +88,8 @@ def main():
     device = get_device(args.device)
     warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
     warnings.filterwarnings("ignore", category=UserWarning)
+    warnings.filterwarnings("ignore", category=FutureWarning)
+    warnings.filterwarnings("ignore", category=ResourceWarning)
 
     dataset = SELFIESDataset(
         os.path.join("./selfies_vae/data/test_selfie.gz"), load_data=True
@@ -180,12 +182,13 @@ def main():
         y_next = torch.unsqueeze(y_next, dim=-1)
         y_next_gt = torch.unsqueeze(y_next_gt, dim=-1)
 
-        policy.update_state(y_next, z_next, dataset)
+        y_next = policy.update_state(y_next, z_next, dataset)
         z = torch.cat((z, z_next), dim=-2)
         y = torch.cat((y, y_next), dim=-2)
         y_gt = torch.cat((y_gt, y_next_gt), dim=-2)
         print(
-            f"{len(z)}) Best value: {policy.state.best_value:.5f}"
+            f"{len(z)}) Best value: {policy.state.best_value:.5f} |",
+            f"(Oracle: {torch.max(y_gt).item():.5f})"
         )
 
         # Train the source critic.

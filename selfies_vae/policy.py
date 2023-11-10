@@ -210,7 +210,7 @@ class BOAdversarialPolicy(BOPolicy):
 
     def update_state(
         self, y: torch.Tensor, z: torch.Tensor, ref_dataset: SELFIESDataset
-    ) -> None:
+    ) -> torch.Tensor:
         """
         Updates the state internal variables given objective values y.
         Input:
@@ -219,17 +219,22 @@ class BOAdversarialPolicy(BOPolicy):
                 corresponding to the input objective values.
             ref_dataset: reference dataset of in-domain molecules.
         Returns:
-           None.
+            A tensor of the penalized objective values.
         """
         alpha = self.alpha(z)
         zref = self.reference_sample(ref_dataset, z.size(dim=0))
-        penalized_objective = ((1 - alpha) * y) - (
-            alpha * torch.maximum(
-                torch.mean(self.critic(zref)) - self.critic(z),
-                torch.zeros_like(y)
+        penalized_objective = ((1 - alpha) * torch.squeeze(y, dim=-1)) - (
+            alpha * torch.squeeze(
+                torch.maximum(
+                    torch.mean(self.critic(zref)) - self.critic(z),
+                    torch.zeros_like(y)
+                ),
+                dim=-1
             )
         )
-        return self.state.update(penalized_objective)
+        penalized_objective = torch.unsqueeze(penalized_objective, dim=-1)
+        self.state.update(penalized_objective)
+        return penalized_objective
 
     def alpha(self, Zq: torch.Tensor) -> Union[float, torch.Tensor]:
         """
@@ -277,11 +282,27 @@ class BOAdversarialPolicy(BOPolicy):
         return
 
     def configure_critic_optimizers(self) -> optim.Optimizer:
+        """
+        Returns the optimizer for the source critic.
+        Input:
+            None.
+        Returns:
+            The optimizer for the source critic.
+        """
         return optim.SGD(self.critic.parameters(), lr=self.critic_lr)
 
     def reference_sample(
         self, ref_dataset: SELFIESDataset, num: int
     ) -> torch.Tensor:
+        """
+        Samples a batch of random real molecules from a reference dataset.
+        Input:
+            ref_dataset: reference dataset of real molecules.
+            num: number of molecules to sample from the reference dataset.
+        Returns:
+            A batch of real molecules from the reference dataset encoded in
+            the VAE latent space.
+        """
         idxs = self.rng.choice(
             len(ref_dataset), min(num, len(ref_dataset)), replace=False
         )
