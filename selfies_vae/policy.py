@@ -16,7 +16,7 @@ import torch.optim as optim
 import botorch
 import selfies as sf
 from tqdm import tqdm
-from typing import Sequence, Union
+from typing import Optional, Sequence, Union
 from botorch.acquisition import qExpectedImprovement
 from botorch.optim import optimize_acqf
 
@@ -153,7 +153,7 @@ class BOAdversarialPolicy(BOPolicy):
         self,
         vae: InfoTransformerVAE,
         alpha: Union[float, str],
-        surrogate: nn.Module,
+        surrogate: Optional[nn.Module] = None,
         device: torch.device = torch.device("cpu"),
         num_restarts: int = 10,
         raw_samples: int = 512,
@@ -161,7 +161,6 @@ class BOAdversarialPolicy(BOPolicy):
         critic_max_steps: int = 50,
         critic_batch_size: int = 128,
         critic_c: float = 0.1,
-        is_cost: bool = False,
         verbose: bool = True,
         seed: int = 42,
         **kwargs
@@ -170,24 +169,28 @@ class BOAdversarialPolicy(BOPolicy):
         Args:
             vae: trained transformer VAE autoencoder.
             alpha: a float between 0 and 1, or `Lipschitz` for our method.
+            surrogate: surrogate function for objective estimation. Only
+                required if the alpha argument is `Lipschitz`.
             device: device. Default CPU.
             num_restarts: number of starting points for multistart acquisition
                 function optimization.
             raw_samples: number of samples for initialization.
-            is_cost: whether objective is a cost to minimize. Default False.
+            critic_lr: learning rate for source critic training.
+            critic_max_steps: maximum number of weight updates per BO step.
+            critic_batch_size: batch size for source critic training.
+            critic_c: source critic weight clipping parameter.
             verbose: whether to print verbose outputs to `stdout`.
             seed: random seed. Default 42.
         """
         super().__init__(vae, device, num_restarts, raw_samples, **kwargs)
         self.alpha_ = alpha
-        self.surrogate = surrogate
         if self.alpha_.replace(".", "", 1).isnumeric():
             self.alpha_ = float(self.alpha_)
+        self.surrogate = surrogate
         self.critic_lr = critic_lr
         self.critic_max_steps = critic_max_steps
         self.critic_batch_size = critic_batch_size
         self.critic_c = critic_c
-        self.is_cost = is_cost
         self.verbose = verbose
         self.seed = seed
         self.rng = np.random.RandomState(seed=self.seed)
@@ -201,7 +204,7 @@ class BOAdversarialPolicy(BOPolicy):
         )
         self.clipper = WeightClipper(c=self.critic_c)
         self.critic_optimizer = self.configure_critic_optimizers()
-        if isinstance(self.alpha, str):
+        if isinstance(self.alpha_, str):
             self.L = Lipschitz(self.surrogate, mode="local", p=2)
             self.K = Lipschitz(self.critic, mode="global")
 
@@ -220,7 +223,7 @@ class BOAdversarialPolicy(BOPolicy):
         """
         alpha = self.alpha(z)
         zref = self.reference_sample(ref_dataset, z.size(dim=0))
-        penalized_objective = ((1 - alpha) * y) + (
+        penalized_objective = ((1 - alpha) * y) - (
             alpha * (torch.mean(self.critic(zref)) - self.critic(z))
         )
         return self.state.update(penalized_objective)
@@ -235,9 +238,7 @@ class BOAdversarialPolicy(BOPolicy):
         """
         if isinstance(self.alpha_, float):
             return self.alpha_
-        if self.is_cost:
-            return 1.0 / (1.0 + (self.K() / self.L(Zq)))
-        return 1.0 / (1.0 - (self.K() / self.L(Zq)))
+        return 1.0 / (1.0 + (self.K() / self.L(Zq)))
 
     def update_critic(
         self,

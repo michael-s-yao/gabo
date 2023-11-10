@@ -67,7 +67,7 @@ def build_objective(
         hidden_dims=hparams["hidden_dims"],
         dropout=hparams["dropout"],
         final_activation=None,
-        hidden_activation="GELU"
+        hidden_activation="ReLU"
     )
     surrogate = surrogate.to(device)
     if hparams["optimizer"].title() == "Adam":
