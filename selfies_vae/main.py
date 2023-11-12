@@ -184,7 +184,7 @@ def main():
         y = torch.cat((y, y_next), dim=-2)
         y_gt = torch.cat((y_gt, y_next_gt), dim=-2)
         print(
-            f"{len(z)}) Best value: {policy.state.best_value:.5f} |",
+            f"{len(z)}) Best value: {torch.max(y).item():.5f} |",
             f"(Oracle: {torch.max(y_gt).item():.5f})"
         )
 

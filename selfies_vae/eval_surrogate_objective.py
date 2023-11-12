@@ -19,7 +19,8 @@ from tqdm import tqdm
 from typing import Optional, Union
 
 sys.path.append(".")
-from selfies_vae.data import SELFIESDataModule
+from selfies_vae.data import SELFIESDataModule, SELFIESDataset
+from selfies_vae.vae import InfoTransformerVAE
 from selfies_vae.policy import BOPolicy
 from selfies_vae.utils import MoleculeObjective
 from models.fcnn import FCNN
@@ -46,7 +47,12 @@ def eval_surrogate(
     dm = SELFIESDataModule()
     device = torch.device("cpu")
 
-    vae = "./selfies_vae/ckpts/SELFIES-VAE-state-dict.pt"
+    encoder = "./selfies_vae/ckpts/SELFIES-VAE-state-dict.pt"
+    vae = InfoTransformerVAE(SELFIESDataset()).to(device)
+    vae.load_state_dict(
+        torch.load(encoder, map_location=device), strict=True
+    )
+    vae.eval()
     policy = BOPolicy(vae, device=device)
 
     objective = MoleculeObjective("logP")
@@ -62,11 +68,7 @@ def eval_surrogate(
         final_activation=None,
         hidden_activation="GELU"
     )
-    surrogate.load_state_dict(
-        torch.load(
-            os.path.join(os.path.dirname(__file__), "./ckpts/27_surrogate.pt")
-        )
-    )
+    surrogate.load_state_dict(torch.load(surrogate_path))
     surrogate = surrogate.to(device=device, dtype=policy.vae.dtype)
 
     val = {"preds": [], "gts": []}

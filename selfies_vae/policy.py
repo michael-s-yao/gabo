@@ -26,7 +26,7 @@ from models.lipschitz import Lipschitz
 from models.critic import WeightClipper
 from selfies_vae.data import SELFIESDataset
 from selfies_vae.vae import InfoTransformerVAE
-from selfies_vae.turbostate import TurboState
+from models.turbostate import TurboState
 
 
 class BOPolicy:
@@ -266,6 +266,8 @@ class BOAdversarialPolicy(BOPolicy):
         Returns:
             None.
         """
+        if isinstance(self.alpha_, float) and self.alpha_ == 0.0:
+            return
         for _ in tqdm(
             range(self.critic_max_steps),
             desc="Training Source Critic",
