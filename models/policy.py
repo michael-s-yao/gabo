@@ -183,7 +183,7 @@ class BOAdversarialPolicy(BOPolicy):
             return y
         zref = self.reference_sample(z.size(dim=0)).to(z.device)
         Wd = torch.mean(self.critic(zref)) - self.critic(z)
-        # Wd = torch.maximum(Wd, torch.zeros_like(y))
+        Wd = torch.maximum(Wd, torch.zeros_like(y))
         if self.alpha_ == 1.0:
             return (1.0 - (2.0 * self.maximize)) * Wd
         penalized_objective = torch.squeeze(y, dim=-1) - (

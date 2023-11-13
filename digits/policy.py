@@ -8,7 +8,9 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import sys
 import torch
+import botorch
 from pathlib import Path
+from tqdm import tqdm
 from typing import Tuple, Union
 
 sys.path.append(".")
@@ -64,6 +66,7 @@ class MNISTAdversarialPolicy(BOAdversarialPolicy):
             seed=seed
         )
         Xdummy, y = self.ref_dataset[0]
+        self.x_dim = Xdummy.size()
         _, self.z_dim = self.encode(
             torch.unsqueeze(Xdummy.to(self.device), dim=0)
         )
@@ -74,17 +77,14 @@ class MNISTAdversarialPolicy(BOAdversarialPolicy):
         Input:
             num: number of images to sample from the reference dataset.
         Returns:
-            A batch of real digit images from the reference dataset encoded in
-            the autoencoder latent space.
+            A batch of real digit images from the reference dataset.
         """
         idxs = self.rng.choice(len(self.ref_dataset), num, replace=False)
-        Zp = [
-            self.encode(
-                self.ref_dataset[int(i)][0].unsqueeze(dim=0).to(self.device)
-            )[0]
+        Xp = [
+            self.ref_dataset[int(i)][0].unsqueeze(dim=0).to(self.device)
             for i in idxs
         ]
-        return torch.cat(Zp, dim=0)
+        return torch.cat(Xp, dim=0).flatten(start_dim=1)
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -110,3 +110,41 @@ class MNISTAdversarialPolicy(BOAdversarialPolicy):
         z = self.autoencoder.encode(X)
         z_dim = tuple(z.size())[1:]
         return z.reshape(z.size(dim=0), -1), z_dim
+
+    def update_critic(
+        self,
+        model: botorch.models.model.Model,
+        z: torch.Tensor,
+        y: torch.Tensor
+    ) -> None:
+        """
+        Trains the source critic according to the allocated training budget.
+        Input:
+            model: a single-task variational GP model.
+            z: prior observations in the autoencoder latent space.
+            y: objective values of the prior latent space observations.
+        Returns:
+            None.
+        """
+        if isinstance(self.alpha_, float) and self.alpha_ == 0.0:
+            return
+        with tqdm(
+            range(self.critic_config["max_steps"]),
+            desc="Training Source Critic",
+            leave=False,
+            disable=(not self.verbose)
+        ) as pbar:
+            for _ in pbar:
+                Xp = self.reference_sample(self.critic_config["batch_size"])
+                Xp = Xp.to(self.device)
+                Zq = self(model, z, y, 8 * self.critic_config["batch_size"])
+                Xq = self.decode(Zq.to(self.device)).flatten(start_dim=1)
+                self.critic.zero_grad()
+                negWd = torch.mean(self.critic(Xq)) - torch.mean(
+                    self.critic(Xp)
+                )
+                negWd.backward()
+                self.critic_optimizer.step()
+                self.clipper(self.critic)
+                pbar.set_postfix(Wd=-negWd)
+        return

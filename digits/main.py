@@ -94,6 +94,7 @@ def main():
     device = torch.device("cuda:0")
     warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
     warnings.filterwarnings("ignore", category=InputDataWarning)
+    warnings.filterwarnings("ignore", category=FutureWarning)
 
     dm = MNISTDataModule(
         batch_size=args.batch_size,
@@ -114,18 +115,22 @@ def main():
         dm.test, convae, args.alpha, surrogate, device, seed=args.seed
     )
 
+    z_ref = policy.encode(
+        policy.reference_sample(8 * args.batch_size).reshape(-1, *policy.x_dim)
+    )[0]
+    z_mean, z_std = torch.mean(z_ref), torch.std(z_ref)
     sobol = SobolEngine(
         dimension=np.prod(policy.z_dim),
         scramble=True,
         seed=args.seed
     )
-    z_init = sobol.draw(n=args.batch_size).to(device)
+    z_init = z_mean + (z_std * sobol.draw(n=args.batch_size).to(device))
 
     X = policy.decode(z_init)
     z, _ = policy.encode(X)
     z = z.detach().to(convae.dtype)
     y = surrogate(X.flatten(start_dim=1))
-    y = policy.penalize(y, z).detach()
+    y = policy.penalize(y, X.flatten(start_dim=1)).detach()
 
     y_gt = torch.tensor([torch.mean(torch.square(x)) for x in X]).to(device)
     y_gt = torch.unsqueeze(y_gt, dim=-1)
@@ -154,8 +159,9 @@ def main():
         y_next = torch.unsqueeze(y_next, dim=-1)
         y_next_gt = torch.unsqueeze(y_next_gt.to(device), dim=-1)
 
-        y_next = policy.penalize(y_next, z_next)
+        y_next = policy.penalize(y_next, X_next.flatten(start_dim=1))
         policy.update_state(y_next)
+        X = torch.cat((X, X_next), dim=0)
         z = torch.cat((z, z_next), dim=-2)
         y = torch.cat((y, y_next), dim=-2)
         y_gt = torch.cat((y_gt, y_next_gt), dim=-2)
@@ -171,6 +177,7 @@ def main():
     with open(args.savepath, "wb") as f:
         results = {
             "batch_size": args.batch_size,
+            "X": X.detach().cpu().numpy(),
             "z": z.detach().cpu().numpy(),
             "y": y.detach().cpu().numpy(),
             "y_gt": y_gt.detach().cpu().numpy()
