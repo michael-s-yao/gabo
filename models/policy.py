@@ -162,15 +162,16 @@ class BOAdversarialPolicy(BOPolicy):
                 final_activation=None,
                 hidden_activation="ReLU"
             )
+            self.critic = self.critic.to(self.device)
             self.clipper = WeightClipper(c=self.critic_config["c"])
             self.critic_optimizer = self.configure_critic_optimizers()
         if isinstance(self.alpha_, str):
             self.L = Lipschitz(self.surrogate, mode="local", p=2)
             self.K = Lipschitz(self.critic, mode="global")
 
-    def update_state(self, y: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+    def penalize(self, y: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """
-        Updates the state internal variables given objective values y.
+        Penalizes the input objective values y.
         Input:
             y: input objective values.
             z: input generated digts in the latent space of the autoencoder
@@ -180,17 +181,15 @@ class BOAdversarialPolicy(BOPolicy):
         """
         if self.alpha_ == 0.0:
             return y
-        zref = self.reference_sample(z.size(dim=0))
+        zref = self.reference_sample(z.size(dim=0)).to(z.device)
         Wd = torch.mean(self.critic(zref)) - self.critic(z)
-        Wd = torch.maximum(Wd, torch.zeros_like(y))
+        # Wd = torch.maximum(Wd, torch.zeros_like(y))
         if self.alpha_ == 1.0:
-            return Wd
+            return (1.0 - (2.0 * self.maximize)) * Wd
         penalized_objective = torch.squeeze(y, dim=-1) - (
             self.corr_factor(z) * torch.squeeze(Wd, dim=-1)
         )
-        penalized_objective = torch.unsqueeze(penalized_objective, dim=-1)
-        self.state.update(penalized_objective)
-        return penalized_objective
+        return torch.unsqueeze(penalized_objective, dim=-1)
 
     def corr_factor(self, Zq: torch.Tensor) -> Union[float, torch.Tensor]:
         """
@@ -221,16 +220,28 @@ class BOAdversarialPolicy(BOPolicy):
         """
         if isinstance(self.alpha_, float) and self.alpha_ == 0.0:
             return
+        Zq = self(model, z, y, 8 * self.critic_config["batch_size"]).to(
+            self.device
+        )
         for _ in tqdm(
             range(self.critic_config["max_steps"]),
             desc="Training Source Critic",
             leave=False,
             disable=(not self.verbose)
         ):
-            Zp = self.reference_sample(self.critic_config["batch_size"])
-            Zq = self(model, z, y, batch_size=self.critic_config["batch_size"])
+            Zp = self.reference_sample(self.critic_config["batch_size"]).to(
+                self.device
+            )
+            idxs = self.rng.choice(
+                len(Zq), self.critic_config["batch_size"], replace=False
+            )
+            Zq_batch = torch.cat(
+                [torch.unsqueeze(Zq[int(i), :], dim=0) for i in idxs], dim=0
+            )
             self.critic.zero_grad()
-            negWd = torch.mean(self.critic(Zq)) - torch.mean(self.critic(Zp))
+            negWd = torch.mean(self.critic(Zq_batch)) - torch.mean(
+                self.critic(Zp)
+            )
             negWd.backward()
             self.critic_optimizer.step()
             self.clipper(self.critic)

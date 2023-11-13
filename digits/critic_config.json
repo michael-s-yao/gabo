@@ -4,5 +4,5 @@
   "lr": 0.001,
   "c": 0.01,
   "max_steps": 50,
-  "batch_size": 128
+  "batch_size": 16
 }

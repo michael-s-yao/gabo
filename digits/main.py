@@ -90,8 +90,8 @@ def build_args() -> argparse.Namespace:
 
 def main():
     args = build_args()
-    seed_everything(seed=args.seed)
-    device = torch.device("cpu")
+    seed_everything(seed=args.seed, use_deterministic=False)
+    device = torch.device("cuda:0")
     warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
     warnings.filterwarnings("ignore", category=InputDataWarning)
 
@@ -124,8 +124,9 @@ def main():
     X = policy.decode(z_init)
     z, _ = policy.encode(X)
     z = z.detach().to(convae.dtype)
-    y = surrogate(X.flatten(start_dim=1)).detach()
-    y_mean, y_std = torch.mean(y), torch.std(torch.squeeze(y, dim=-1))
+    y = surrogate(X.flatten(start_dim=1))
+    y = policy.penalize(y, z).detach()
+
     y_gt = torch.tensor([torch.mean(torch.square(x)) for x in X]).to(device)
     y_gt = torch.unsqueeze(y_gt, dim=-1)
 
@@ -133,7 +134,7 @@ def main():
     covar_module = ScaleKernel(MaternKernel(nu=2.5)).to(device)
     model = SingleTaskVariationalGP(
         z,
-        (y - y_mean) / y_std,
+        y,
         inducing_points=1024,
         likelihood=likelihood,
         covar_module=covar_module
@@ -147,14 +148,14 @@ def main():
         fit_gpytorch_mll(mll)
         z_next = policy(model, z, y, batch_size=args.batch_size)
 
-        # Decode batch to smiles, get logP values.
         X_next = policy.decode(z_next)
         y_next = torch.squeeze(surrogate(X_next.flatten(start_dim=1)), dim=-1)
         y_next_gt = torch.tensor([torch.mean(torch.square(x)) for x in X_next])
         y_next = torch.unsqueeze(y_next, dim=-1)
         y_next_gt = torch.unsqueeze(y_next_gt.to(device), dim=-1)
 
-        y_next = policy.update_state(y_next, z_next)
+        y_next = policy.penalize(y_next, z_next)
+        policy.update_state(y_next)
         z = torch.cat((z, z_next), dim=-2)
         y = torch.cat((y, y_next), dim=-2)
         y_gt = torch.cat((y_gt, y_next_gt), dim=-2)
@@ -163,7 +164,6 @@ def main():
             f"(Oracle: {torch.max(y_gt).item():.5f})"
         )
 
-        # Train the source critic.
         policy.update_critic(model, z, y)
 
     if args.savepath is None:
