@@ -49,6 +49,12 @@ def build_args() -> argparse.Namespace:
         help="A float between 0 and 1, or `Lipschitz` for our method."
     )
     parser.add_argument(
+        "--warmup_steps",
+        type=int,
+        default=0,
+        help="Number of critic warmup steps before starting optimization."
+    )
+    parser.add_argument(
         "--autoencoder",
         type=str,
         default="./digits/ckpts/convae.ckpt",
@@ -124,13 +130,18 @@ def main():
         scramble=True,
         seed=args.seed
     )
-    z_init = z_mean + (z_std * sobol.draw(n=args.batch_size).to(device))
+    z_init = z_mean + (z_std * sobol.draw(n=(8 * args.batch_size)).to(device))
 
+    corr_factors = []
     X = policy.decode(z_init)
     z, _ = policy.encode(X)
     z = z.detach().to(convae.dtype)
     y = surrogate(X.flatten(start_dim=1))
-    y = policy.penalize(y, X.flatten(start_dim=1)).detach()
+    y, alpha = policy.penalize(y, X.flatten(start_dim=1))
+    y = y.detach()
+    if not isinstance(alpha, float):
+        alpha = alpha.detach().cpu().numpy()
+    corr_factors.append(alpha)
 
     y_gt = torch.tensor([torch.mean(torch.square(x)) for x in X]).to(device)
     y_gt = torch.unsqueeze(y_gt, dim=-1)
@@ -140,7 +151,6 @@ def main():
     model = SingleTaskVariationalGP(
         z,
         y,
-        inducing_points=1024,
         likelihood=likelihood,
         covar_module=covar_module
     )
@@ -148,6 +158,10 @@ def main():
         likelihood, model.model, num_data=z.size(dim=0)
     )
 
+    # Warmup source critic training.
+    for _ in range(args.warmup_steps):
+        policy.update_critic(model, z, y)
+    # Generative adversarial Bayesian optimization.
     budget = np.inf if args.budget < 1 else args.budget
     while len(y) < budget and not policy.restart_triggered:
         fit_gpytorch_mll(mll)
@@ -159,7 +173,11 @@ def main():
         y_next = torch.unsqueeze(y_next, dim=-1)
         y_next_gt = torch.unsqueeze(y_next_gt.to(device), dim=-1)
 
-        y_next = policy.penalize(y_next, X_next.flatten(start_dim=1))
+        y_next, alpha = policy.penalize(y_next, X_next.flatten(start_dim=1))
+        if not isinstance(alpha, float):
+            alpha = alpha.detach().cpu().numpy()
+        corr_factors.append(alpha)
+
         policy.update_state(y_next)
         X = torch.cat((X, X_next), dim=0)
         z = torch.cat((z, z_next), dim=-2)
@@ -177,6 +195,7 @@ def main():
     with open(args.savepath, "wb") as f:
         results = {
             "batch_size": args.batch_size,
+            "alpha": corr_factors,
             "X": X.detach().cpu().numpy(),
             "z": z.detach().cpu().numpy(),
             "y": y.detach().cpu().numpy(),

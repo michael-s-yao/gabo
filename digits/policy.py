@@ -146,5 +146,5 @@ class MNISTAdversarialPolicy(BOAdversarialPolicy):
                 negWd.backward()
                 self.critic_optimizer.step()
                 self.clipper(self.critic)
-                pbar.set_postfix(Wd=-negWd)
+                pbar.set_postfix(Wd=-negWd.item())
         return

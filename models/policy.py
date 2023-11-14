@@ -16,7 +16,7 @@ import pytorch_lightning as pl
 import botorch
 from pathlib import Path
 from tqdm import tqdm
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
 
 sys.path.append(".")
 from models.turbostate import TurboState
@@ -169,7 +169,9 @@ class BOAdversarialPolicy(BOPolicy):
             self.L = Lipschitz(self.surrogate, mode="local", p=2)
             self.K = Lipschitz(self.critic, mode="global")
 
-    def penalize(self, y: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+    def penalize(
+        self, y: torch.Tensor, z: torch.Tensor
+    ) -> Tuple[torch.Tensor, Union[torch.Tensor, float]]:
         """
         Penalizes the input objective values y.
         Input:
@@ -177,19 +179,21 @@ class BOAdversarialPolicy(BOPolicy):
             z: input generated digts in the latent space of the autoencoder
                 corresponding to the input objective values.
         Returns:
-            A tensor of the penalized objective values.
+            A tuple of the penalized objective values and the associated
+            correction factors.
         """
         if self.alpha_ == 0.0:
-            return y
+            return y, self.alpha_
         zref = self.reference_sample(z.size(dim=0)).to(z.device)
         Wd = torch.mean(self.critic(zref)) - self.critic(z)
         Wd = torch.maximum(Wd, torch.zeros_like(y))
         if self.alpha_ == 1.0:
-            return (1.0 - (2.0 * self.maximize)) * Wd
+            return (1.0 - (2.0 * self.maximize)) * Wd, self.alpha_
+        alpha = self.corr_factor(z)
         penalized_objective = torch.squeeze(y, dim=-1) - (
-            self.corr_factor(z) * torch.squeeze(Wd, dim=-1)
+            alpha * torch.squeeze(Wd, dim=-1)
         )
-        return torch.unsqueeze(penalized_objective, dim=-1)
+        return torch.unsqueeze(penalized_objective, dim=-1), alpha
 
     def corr_factor(self, Zq: torch.Tensor) -> Union[float, torch.Tensor]:
         """
@@ -201,7 +205,7 @@ class BOAdversarialPolicy(BOPolicy):
         """
         if isinstance(self.alpha_, float):
             return self.alpha_ / (1.0 - self.alpha_)
-        return torch.from_numpy(self.L(Zq) / self.K()).to(Zq)
+        return torch.from_numpy(self.L(Zq) / self.K(Zq)).to(Zq)
 
     def update_critic(
         self,
