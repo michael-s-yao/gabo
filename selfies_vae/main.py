@@ -27,7 +27,7 @@ from botorch.exceptions.warnings import BadInitialCandidatesWarning
 sys.path.append(".")
 from selfies_vae.vae import InfoTransformerVAE
 from selfies_vae.data import SELFIESDataset
-from selfies_vae.policy import BOAdversarialPolicy
+from selfies_vae.policy import SELFIESAdversarialPolicy
 from selfies_vae.utils import MoleculeObjective
 from models.fcnn import FCNN
 from experiment.utility import seed_everything
@@ -43,6 +43,12 @@ def build_args() -> argparse.Namespace:
         type=str,
         required=True,
         help="A float between 0 and 1, or `Lipschitz` for our method."
+    )
+    parser.add_argument(
+        "--warmup_steps",
+        type=int,
+        default=0,
+        help="Number of critic warmup steps before starting optimization."
     )
     parser.add_argument(
         "--encoder",
@@ -116,27 +122,33 @@ def main():
         )
     )
     surrogate = surrogate.to(device=device, dtype=vae.dtype)
-    policy = BOAdversarialPolicy(
+    policy = SELFIESAdversarialPolicy(
+        ref_dataset=dataset,
         vae=vae,
         alpha=args.alpha,
         surrogate=surrogate,
-        device=device,
-        critic_max_steps=50,
-        critic_batch_size=(8 * args.batch_size)
+        device=device
     )
 
+    z_ref = policy.reference_sample(8 * args.batch_size)
+    z_mean, z_std = torch.mean(z_ref), torch.std(z_ref)
     sobol = SobolEngine(
-        dimension=vae.encoder_embedding_dim,
+        dimension=policy.z_dim,
         scramble=True,
         seed=args.seed
     )
-    z_init = sobol.draw(n=args.batch_size).to(
-        dtype=torch.float32, device=device
-    )
+    z_init = z_mean + (z_std * sobol.draw(n=(8 * args.batch_size)).to(device))
 
+    corr_factors = []
     smiles = policy.decode(z_init)
     z = policy.encode(smiles).detach().to(vae.dtype)
-    y = surrogate(z).detach()
+    y = surrogate(z)
+    y, alpha = policy.penalize(y, z)
+    y = y.detach()
+    if not isinstance(alpha, float):
+        alpha = alpha.detach().cpu().numpy()
+    corr_factors.append(alpha)
+
     y_gt = torch.tensor([[objective(smi)] for smi in smiles])
     y_mean, y_std = torch.mean(y), torch.std(y)
 
@@ -153,12 +165,15 @@ def main():
         likelihood, model.model, num_data=z.size(dim=0)
     )
 
+    # Warmup source critic training.
+    for _ in range(args.warmup_steps):
+        policy.update_critic(model, z, y)
+    # Generative adversarial Bayesian optimization.
     budget = np.inf if args.budget < 1 else args.budget
     while len(y) < budget and not policy.restart_triggered:
         fit_gpytorch_mll(mll)
         z_next = policy(model, z, y, batch_size=args.batch_size)
 
-        # Decode batch to smiles, get logP values.
         smiles = policy.decode(z_next)
         y_next = torch.squeeze(surrogate(z_next), dim=-1)
         y_next_gt = [objective(smi) for smi in smiles]
@@ -179,7 +194,12 @@ def main():
         y_next = torch.unsqueeze(y_next, dim=-1)
         y_next_gt = torch.unsqueeze(y_next_gt, dim=-1)
 
-        y_next = policy.update_state(y_next, z_next, dataset)
+        y_next, alpha = policy.penalize(y_next, z_next)
+        if not isinstance(alpha, float):
+            alpha = alpha.detach().cpu().numpy()
+        corr_factors.append(alpha)
+
+        policy.update_state(y_next)
         z = torch.cat((z, z_next), dim=-2)
         y = torch.cat((y, y_next), dim=-2)
         y_gt = torch.cat((y_gt, y_next_gt), dim=-2)
@@ -188,14 +208,14 @@ def main():
             f"(Oracle: {torch.max(y_gt).item():.5f})"
         )
 
-        # Train the source critic.
-        policy.update_critic(model, z, y, dataset)
+        policy.update_critic(model, z, y)
 
     if args.savepath is None:
         return
     with open(args.savepath, "wb") as f:
         results = {
             "batch_size": args.batch_size,
+            "alpha": corr_factors,
             "z": z.detach().cpu().numpy(),
             "y": y.detach().cpu().numpy(),
             "y_gt": y_gt.detach().cpu().numpy()

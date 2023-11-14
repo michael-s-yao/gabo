@@ -40,7 +40,6 @@ class MNISTAdversarialPolicy(BOAdversarialPolicy):
         Args:
             ref_dataset: a reference dataset of real digit images.
             autoencoder: trained convolutional autoencoder.
-            z_dim: floattened dimensions of the autoencoder latent space.
             alpha: a float between 0 and 1, or `Lipschitz` for our method.
             surrogate: surrogate function for objective estimation. Only
                 required if the alpha argument is `Lipschitz`.

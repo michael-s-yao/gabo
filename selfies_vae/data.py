@@ -149,18 +149,10 @@ class SELFIESDataset(Dataset):
                 selfie_strings = [x.decode().strip() for x in f.readlines()]
             for string in selfie_strings:
                 self.data.append(list(sf.split_selfies(string)))
-            self.vocab = set([
-                token for selfie in self.data for token in selfie
-            ])
-            self.vocab.discard(".")
-            self.vocab = [
-                self.start, self.stop, *sorted(list(self.vocab))
-            ]
-        else:
-            with open(
-                os.path.join(self.home, default_selfies_vocab), "r"
-            ) as f:
-                self.vocab = json.load(f)
+        with open(
+            os.path.join(self.home, default_selfies_vocab), "r"
+        ) as f:
+            self.vocab = json.load(f)
         self.vocab2idx = {char: idx for idx, char in enumerate(self.vocab)}
 
     def tokenize_selfies(
