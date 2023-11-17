@@ -6,23 +6,18 @@ Author(s):
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
-import json
 import sys
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import pytorch_lightning as pl
 import botorch
 from pathlib import Path
-from tqdm import tqdm
 from typing import Optional, Tuple, Union
 
 sys.path.append(".")
 from models.turbostate import TurboState
-from models.fcnn import FCNN
-from models.critic import WeightClipper
-from models.lipschitz import Lipschitz
+from models.dual import Alpha
 
 
 class BOPolicy:
@@ -51,6 +46,7 @@ class BOPolicy:
         self.device = device
         self.state = TurboState(**kwargs)
         self.init_region_size = 6
+        self.eps = torch.finfo(torch.float64).eps
 
     def __call__(
         self,
@@ -70,7 +66,9 @@ class BOPolicy:
         """
         z_center = z[torch.argmax(y), :].clone()
         tr_lb = z_center - (self.init_region_size * self.state.length / 2)
+        tr_lb = torch.maximum(tr_lb, torch.full_like(tr_lb, self.eps))
         tr_ub = z_center + (self.init_region_size * self.state.length / 2)
+        tr_ub = torch.minimum(tr_ub, torch.full_like(tr_ub, 1.0 - self.eps))
         z_next, _ = botorch.optim.optimize_acqf(
             botorch.acquisition.qExpectedImprovement(
                 model, torch.max(y), maximize=self.maximize
@@ -109,9 +107,9 @@ class BOAdversarialPolicy(BOPolicy):
         self,
         maximize: bool,
         ref_dataset: torch.utils.data.Dataset,
+        surrogate: Union[nn.Module, pl.LightningModule],
         autoencoder: nn.Module,
-        alpha: Union[float, str],
-        surrogate: Optional[Union[nn.Module, pl.LightningModule]] = None,
+        alpha: Optional[float] = None,
         device: torch.device = torch.device("cpu"),
         num_restarts: int = 10,
         raw_samples: int = 512,
@@ -127,7 +125,7 @@ class BOAdversarialPolicy(BOPolicy):
             ref_dataset: a reference dataset of real digit images.
             autoencoder: trained encoder model with both encode and decode
                 methods implemented.
-            alpha: a float between 0 and 1, or `Lipschitz` for our method.
+            alpha: if specified, a constant value of alpha is used.
             surrogate: surrogate function for objective estimation. Only
                 required if the alpha argument is `Lipschitz`.
             device: device. Default CPU.
@@ -141,33 +139,15 @@ class BOAdversarialPolicy(BOPolicy):
         super().__init__(maximize, num_restarts, raw_samples, device, **kwargs)
         self.ref_dataset = ref_dataset
         self.autoencoder = autoencoder.to(self.device)
-        self.alpha_ = alpha
-        if self.alpha_.replace(".", "", 1).isnumeric():
-            self.alpha_ = float(self.alpha_)
         self.surrogate = surrogate
-        self.critic_config = {}
-        if critic_config is not None:
-            with open(critic_config, "rb") as f:
-                self.critic_config = json.load(f)
-        self.verbose = verbose
+        self.alpha = Alpha(
+            self.surrogate,
+            constant=alpha,
+            verbose=verbose,
+            maximize_surrogate=maximize
+        )
         self.seed = seed
         self.rng = np.random.RandomState(seed=self.seed)
-
-        if isinstance(self.alpha_, str) or self.alpha_ > 0.0:
-            self.critic = FCNN(
-                in_dim=self.critic_config["in_dim"],
-                out_dim=1,
-                hidden_dims=self.critic_config["hidden_dims"],
-                dropout=0.0,
-                final_activation=None,
-                hidden_activation="ReLU"
-            )
-            self.critic = self.critic.to(self.device)
-            self.clipper = WeightClipper(c=self.critic_config["c"])
-            self.critic_optimizer = self.configure_critic_optimizers()
-        if isinstance(self.alpha_, str):
-            self.L = Lipschitz(self.surrogate, mode="local", p=2)
-            self.K = Lipschitz(self.critic, mode="global")
 
     def penalize(
         self, y: torch.Tensor, z: torch.Tensor
@@ -196,72 +176,6 @@ class BOAdversarialPolicy(BOPolicy):
             alpha * torch.squeeze(Wd, dim=-1)
         )
         return torch.unsqueeze(penalized_objective, dim=-1), alpha
-
-    def corr_factor(self, Zq: torch.Tensor) -> Union[float, torch.Tensor]:
-        """
-        Calculates the correction factor for regularization weighting.
-        Input:
-            Xq: generated digits in the latent space of the autoencoder.
-        Returns:
-            The value(s) of alpha for regularization weighting.
-        """
-        if isinstance(self.alpha_, float):
-            return self.alpha_ / (1.0 - self.alpha_)
-        return torch.from_numpy(self.L(Zq) / self.K(Zq)).to(Zq)
-
-    def update_critic(
-        self,
-        model: botorch.models.model.Model,
-        z: torch.Tensor,
-        y: torch.Tensor
-    ) -> None:
-        """
-        Trains the source critic according to the allocated training budget.
-        Input:
-            model: a single-task variational GP model.
-            z: prior observations in the autoencoder latent space.
-            y: objective values of the prior latent space observations.
-        Returns:
-            None.
-        """
-        if isinstance(self.alpha_, float) and self.alpha_ == 0.0:
-            return
-        Zq = self(model, z, y, 8 * self.critic_config["batch_size"]).to(
-            self.device
-        )
-        for _ in tqdm(
-            range(self.critic_config["max_steps"]),
-            desc="Training Source Critic",
-            leave=False,
-            disable=(not self.verbose)
-        ):
-            Zp = self.reference_sample(self.critic_config["batch_size"]).to(
-                self.device
-            )
-            idxs = self.rng.choice(
-                len(Zq), self.critic_config["batch_size"], replace=False
-            )
-            Zq_batch = torch.cat(
-                [torch.unsqueeze(Zq[int(i), :], dim=0) for i in idxs], dim=0
-            )
-            self.critic.zero_grad()
-            negWd = torch.mean(self.critic(Zq_batch)) - torch.mean(
-                self.critic(Zp)
-            )
-            negWd.backward()
-            self.critic_optimizer.step()
-            self.clipper(self.critic)
-        return
-
-    def configure_critic_optimizers(self) -> optim.Optimizer:
-        """
-        Returns the optimizer for the source critic.
-        Input:
-            None.
-        Returns:
-            The optimizer for the source critic.
-        """
-        return optim.SGD(self.critic.parameters(), lr=self.critic_config["lr"])
 
     def reference_sample(self, num: int) -> torch.Tensor:
         """

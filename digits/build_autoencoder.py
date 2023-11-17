@@ -58,7 +58,7 @@ def test(
         axs[(2 * i)].imshow(img[0].detach().cpu().numpy(), cmap="gray")
         axs[(2 * i)].axis("off")
         axs[(2 * i) + 1].imshow(
-            model(img)[0].detach().cpu().numpy(), cmap="gray"
+            model(img)[0][0].detach().cpu().numpy(), cmap="gray"
         )
         axs[(2 * i) + 1].axis("off")
     if savepath is None:
@@ -70,5 +70,5 @@ def test(
 
 
 if __name__ == "__main__":
-    fit()
+    # fit()
     test("./digits/ckpts/convae.ckpt")

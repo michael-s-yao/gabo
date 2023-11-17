@@ -24,9 +24,10 @@ from botorch.exceptions.warnings import (
 
 sys.path.append(".")
 from digits.mnist import MNISTDataModule
-from digits.policy import MNISTAdversarialPolicy
 from digits.surrogate import SurrogateObjective
-from models.convae import ConvAutoEncLightningModule
+from models.dual import Alpha
+from models.transform import SobelGaussianTransform
+from digits.policy import MNISTPolicy
 from experiment.utility import seed_everything
 
 
@@ -44,15 +45,9 @@ def build_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--alpha",
-        type=str,
-        required=True,
-        help="A float between 0 and 1, or `Lipschitz` for our method."
-    )
-    parser.add_argument(
-        "--warmup_steps",
-        type=int,
-        default=0,
-        help="Number of critic warmup steps before starting optimization."
+        type=float,
+        default=None,
+        help="An optional constant value for alpha between 0 and 1."
     )
     parser.add_argument(
         "--autoencoder",
@@ -69,11 +64,11 @@ def build_args() -> argparse.Namespace:
     parser.add_argument(
         "--budget",
         type=int,
-        default=1024,
-        help="Sampling budget. Default 1024. Use -1 for infinite budget."
+        default=2048,
+        help="Sampling budget. Default 2048. Use -1 for infinite budget."
     )
     parser.add_argument(
-        "--batch_size", type=int, default=16, help="Batch size. Default 16."
+        "--batch_size", type=int, default=64, help="Batch size. Default 64."
     )
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed. Default 42."
@@ -100,7 +95,6 @@ def main():
     device = torch.device("cuda:0")
     warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
     warnings.filterwarnings("ignore", category=InputDataWarning)
-    warnings.filterwarnings("ignore", category=FutureWarning)
 
     dm = MNISTDataModule(
         batch_size=args.batch_size,
@@ -110,94 +104,96 @@ def main():
     dm.prepare_data()
     dm.setup()
 
-    convae = ConvAutoEncLightningModule.load_from_checkpoint(args.autoencoder)
-    convae = convae.to(device)
-    convae.eval()
     surrogate = SurrogateObjective.load_from_checkpoint(args.surrogate)
     surrogate = surrogate.to(device)
     surrogate.eval()
 
-    policy = MNISTAdversarialPolicy(
-        dm.test, convae, args.alpha, surrogate, device, seed=args.seed
+    alpha = Alpha(surrogate, constant=args.alpha)
+    policy = MNISTPolicy(
+        dm.test, surrogate, device=device, seed=args.seed
     )
 
-    z_ref = policy.encode(
-        policy.reference_sample(8 * args.batch_size).reshape(-1, *policy.x_dim)
-    )[0]
-    z_mean, z_std = torch.mean(z_ref), torch.std(z_ref)
+    z_ref = policy.reference_sample(args.batch_size)
+    z_ref = z_ref.detach()
+    z_mean, z_std = torch.mean(z_ref).detach(), torch.std(z_ref).detach()
+    ztransform = SobelGaussianTransform(z_mean, z_std)
     sobol = SobolEngine(
-        dimension=np.prod(policy.z_dim),
+        dimension=np.prod(surrogate.convae.model.z_dim),
         scramble=True,
         seed=args.seed
     )
-    z_init = z_mean + (z_std * sobol.draw(n=(8 * args.batch_size)).to(device))
+    zsobel = sobol.draw(n=args.batch_size).to(device).detach()
+    zgauss = ztransform(zsobel)
+    X = policy.decode(ztransform(zsobel))
 
-    corr_factors = []
-    X = policy.decode(z_init)
-    z, _ = policy.encode(X)
-    z = z.detach().to(convae.dtype)
-    y = surrogate(X.flatten(start_dim=1))
-    y, alpha = policy.penalize(y, X.flatten(start_dim=1))
-    y = y.detach()
-    if not isinstance(alpha, float):
-        alpha = alpha.detach().cpu().numpy()
-    corr_factors.append(alpha)
-
-    y_gt = torch.tensor([torch.mean(torch.square(x)) for x in X]).to(device)
-    y_gt = torch.unsqueeze(y_gt, dim=-1)
+    history = []
+    alpha.fit_critic(z_ref, zgauss)
+    y = surrogate(zgauss).detach()
+    y_gt = policy.oracle(zgauss)
+    history.append(alpha(z_ref))
 
     likelihood = GaussianLikelihood().to(device)
     covar_module = ScaleKernel(MaternKernel(nu=2.5)).to(device)
+    a = history[-1]
     model = SingleTaskVariationalGP(
-        z,
-        y,
+        zsobel,
+        ((1 - a) * y.detach()) + a * torch.unsqueeze(
+            alpha.penalize(z_ref, zgauss).detach(), dim=-1
+        ),
         likelihood=likelihood,
         covar_module=covar_module
     )
     mll = PredictiveLogLikelihood(
-        likelihood, model.model, num_data=z.size(dim=0)
+        likelihood, model.model, num_data=zgauss.size(dim=0)
     )
 
-    # Warmup source critic training.
-    for _ in range(args.warmup_steps):
-        policy.update_critic(model, z, y)
     # Generative adversarial Bayesian optimization.
     budget = np.inf if args.budget < 1 else args.budget
     while len(y) < budget and not policy.restart_triggered:
         fit_gpytorch_mll(mll)
-        z_next = policy(model, z, y, batch_size=args.batch_size)
-
-        X_next = policy.decode(z_next)
-        y_next = torch.squeeze(surrogate(X_next.flatten(start_dim=1)), dim=-1)
-        y_next_gt = torch.tensor([torch.mean(torch.square(x)) for x in X_next])
-        y_next = torch.unsqueeze(y_next, dim=-1)
-        y_next_gt = torch.unsqueeze(y_next_gt.to(device), dim=-1)
-
-        y_next, alpha = policy.penalize(y_next, X_next.flatten(start_dim=1))
-        if not isinstance(alpha, float):
-            alpha = alpha.detach().cpu().numpy()
-        corr_factors.append(alpha)
-
-        policy.update_state(y_next)
-        X = torch.cat((X, X_next), dim=0)
-        z = torch.cat((z, z_next), dim=-2)
-        y = torch.cat((y, y_next), dim=-2)
-        y_gt = torch.cat((y_gt, y_next_gt), dim=-2)
-        print(
-            f"{len(z)}) Best value: {torch.max(y).item():.5f} |",
-            f"(Oracle: {torch.max(y_gt).item():.5f})"
+        z_ref = policy.reference_sample(args.batch_size)
+        z_ref = z_ref.detach()
+        z_next = policy(
+            model,
+            zsobel,
+            y,
+            batch_size=args.batch_size
         )
+        z_next = z_next.detach()
+        z_next_gaussian = ztransform(z_next)
+        X_next = policy.decode(z_next_gaussian)
+        X = torch.cat((X, X_next), dim=0)
+        zsobel = torch.cat((zsobel, z_next), dim=0)
 
-        policy.update_critic(model, z, y)
+        alpha.fit_critic(z_ref, z_next_gaussian)
+        history.append(alpha(z_ref))
+
+        y_next = surrogate(z_next_gaussian)
+        y_gt_next = policy.oracle(z_next_gaussian)
+
+        a = history[-1]
+        policy.update_state(
+            ((1 - a) * y_next) + a * torch.unsqueeze(
+                alpha.penalize(z_ref, z_next_gaussian), dim=-1
+            )
+        )
+        y = torch.cat((y, y_next), dim=0)
+        y_gt = torch.cat((y_gt, y_gt_next), dim=0)
+        best_idx = torch.argmax(torch.squeeze(y, dim=-1))
+        print(
+            f"{len(zsobel)}) Best value: {y[best_idx].item():.5f} |",
+            f"(Oracle: {y_gt[best_idx].item():.5f}) |",
+            f"(alpha: {history[-1]})"
+        )
 
     if args.savepath is None:
         return
     with open(args.savepath, "wb") as f:
         results = {
             "batch_size": args.batch_size,
-            "alpha": corr_factors,
+            "alpha": history,
             "X": X.detach().cpu().numpy(),
-            "z": z.detach().cpu().numpy(),
+            "z": ztransform(zsobel.detach()).cpu().numpy(),
             "y": y.detach().cpu().numpy(),
             "y_gt": y_gt.detach().cpu().numpy()
         }

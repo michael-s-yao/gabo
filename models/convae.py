@@ -11,6 +11,7 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import os
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -25,6 +26,8 @@ from typing import Dict, Optional, Sequence, Tuple, Union
 class ConvolutionalAutoEncoder(nn.Module):
     def __init__(
         self,
+        in_dim: int = 28,
+        z_dim: int = 64,
         in_channels: int = 1,
         encoding_channels: Sequence[int] = [16, 8],
         encoding_kernels: Sequence[int] = [3, 3],
@@ -38,6 +41,8 @@ class ConvolutionalAutoEncoder(nn.Module):
     ):
         """
         Args:
+            in_dim: dimension (height and width) of the input images.
+            z_dim: dimensions of the latent space.
             in_channels: number of input (and output) channels into (and out
                 of) the network.
             encoding_channels: sequence of channels to build the encoder.
@@ -57,6 +62,7 @@ class ConvolutionalAutoEncoder(nn.Module):
         """
         super().__init__()
         self.in_channels = in_channels
+        self.z_dim = z_dim
 
         encoding_channels = [self.in_channels] + encoding_channels
         decoding_channels = decoding_channels + [self.in_channels]
@@ -73,6 +79,20 @@ class ConvolutionalAutoEncoder(nn.Module):
             )
         self.encoder = nn.Sequential(*encoder)
 
+        for kernel_size, stride, maxpool_window, maxpool_stride in zip(
+            encoding_kernels,
+            encoding_strides,
+            encoding_maxpool_windows,
+            encoding_maxpool_strides
+        ):
+            in_dim = 1 + ((in_dim + 2 - kernel_size) / stride)
+            in_dim = 1 + ((in_dim - maxpool_window) / maxpool_stride)
+        self.encoder_outdim = (encoding_channels[-1], int(in_dim), int(in_dim))
+
+        self.mu = nn.Linear(np.prod(self.encoder_outdim), self.z_dim)
+        self.logvar = nn.Linear(np.prod(self.encoder_outdim), self.z_dim)
+        self.dec_linear = nn.Linear(self.z_dim, np.prod(self.encoder_outdim))
+
         decoder = []
         for i in range(len(decoding_channels) - 1):
             decoder += ConvolutionalAutoEncoder.decoder_layer(
@@ -87,15 +107,73 @@ class ConvolutionalAutoEncoder(nn.Module):
             )
         self.decoder = nn.Sequential(*decoder)
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    def forward(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
         """
         Forward pass through the convolutional autoencoder.
         Input:
             X: input image with shape BCHW.
         Returns:
             Reconstructed image with shape BCHW.
+            Mean of the sampled distribution.
+            Log of the variance of the sampled distribution.
         """
-        return self.decoder(self.encoder(X))
+        z, mu, logvar = self.encode(X)
+        return self.decode(z), mu, logvar
+
+    def reparametrize(
+        self, mu: torch.Tensor, logvar: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Performs the reparametrization technique for the VAE.
+        Input:
+            mu: mean of the distribution to sample from.
+            logvar: log of the variance of the distribution to sample from.
+        Returns:
+            Sampling from the specified latent space.
+        """
+        return mu + (torch.randn(*mu.size()).to(mu) * torch.exp(0.5 * logvar))
+
+    def bottleneck(self, enc_output: torch.Tensor) -> Tuple[torch.Tensor]:
+        """
+        Computes the mean and logvar of the distribution and samples the
+        latent space accordingly based on the encoder output.
+        Input:
+            enc_output: flattened output from the encoder layer.
+        Returns:
+            z: samples from the specified latent space.
+            mu: mean of the sampled distribution.
+            logvar: log of the variance of the sampled distribution.
+        """
+        enc_output = enc_output.flatten(start_dim=(enc_output.ndim - 3))
+        mu, logvar = self.mu(enc_output), self.logvar(enc_output)
+        return self.reparametrize(mu, logvar), mu, logvar
+
+    def encode(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
+        """
+        Encodes an image or input batch of images.
+        Input:
+            X: an image or input batch of images.
+        Returns:
+            z: samples from the specified latent space.
+            mu: mean of the sampled distribution.
+            logvar: log of the variance of the sampled distribution.
+        """
+        return self.bottleneck(self.encoder(X))
+
+    def decode(self, z: torch.Tensor) -> Tuple[torch.Tensor]:
+        """
+        Decodes a latent space vector or batch of latent space vectors.
+        Input:
+            z: a latent space vector or batch of latent space vectors.
+        Returns:
+            The decoded image or input batch of images.
+        """
+        dec_input = self.dec_linear(z)
+        if z.ndim > 1:
+            dec_input = dec_input.reshape(z.size(dim=0), *self.encoder_outdim)
+        else:
+            dec_input = dec_input.reshape(*self.encoder_outdim)
+        return self.decoder(dec_input)
 
     @staticmethod
     def encoder_layer(
@@ -193,35 +271,17 @@ class ConvAutoEncLightningModule(pl.LightningModule):
         self.ssim = StructuralSimilarityIndexMeasure(gaussian_kernel=True)
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    def forward(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
         """
         Forward pass through the convolutional autoencoder.
         Input:
             X: input image with shape BCHW.
         Returns:
             Reconstructed image with shape BCHW.
+            Mean of the sampled distribution.
+            Log of the variance of the sampled distribution.
         """
         return self.model(X)
-
-    def encode(self, X: torch.Tensor) -> torch.Tensor:
-        """
-        Encodes an input from image space into the latent space.
-        Input:
-            X: input image with shape BCHW.
-        Returns:
-            Encoded image in the latent space.
-        """
-        return self.model.encoder(X)
-
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """
-        Decodes an input latent space vector back into image space.
-        Input:
-            z: input batch of latent space vectors.
-        Returns:
-            Reconstructed image with shape BCHW.
-        """
-        return self.model.decoder(z)
 
     def training_step(
         self, batch: Tuple[torch.Tensor], batch_idx: int
@@ -235,9 +295,13 @@ class ConvAutoEncLightningModule(pl.LightningModule):
             The reconstruction loss of the model over the batch.
         """
         X, _ = batch
-        loss = self.loss(self(X), X)
-        self.log("train_loss", loss, prog_bar=True, sync_dist=True)
-        return loss
+        recon, mu, logvar = self(X)
+        loss = self.loss(recon, X)
+        kld = -0.5 * torch.mean(
+            1.0 + logvar - torch.pow(mu, 2) - torch.exp(logvar)
+        )
+        self.log("train_loss", loss + kld, prog_bar=True, sync_dist=True)
+        return loss + (0.1 * kld)
 
     def validation_step(
         self, batch: Tuple[torch.Tensor], batch_idx: int
@@ -251,14 +315,23 @@ class ConvAutoEncLightningModule(pl.LightningModule):
             Validation step statistics over the batch.
         """
         X, _ = batch
-        recon = self(X)
+        recon, mu, logvar = self(X)
         loss = self.loss(recon, X)
         ssim = self.ssim(recon, X)
         psnr = self.psnr(recon, X)
+        kld = -0.5 * torch.mean(
+            1.0 + logvar - torch.pow(mu, 2) - torch.exp(logvar)
+        )
         self.log("val_mse", loss, prog_bar=True, sync_dist=True)
+        self.log("val_kld", kld, prog_bar=True, sync_dist=True)
         self.log("val_ssim", ssim, prog_bar=True, sync_dist=True)
         self.log("val_psnr", psnr, prog_bar=True, sync_dist=True)
-        return {"mse": loss.item(), "ssim": ssim.item(), "psnr": psnr.item()}
+        return {
+            "mse": loss.item(),
+            "kld": kld.item(),
+            "ssim": ssim.item(),
+            "psnr": psnr.item(),
+        }
 
     def test_step(
         self, batch: Tuple[torch.Tensor], batch_idx: int
@@ -272,7 +345,7 @@ class ConvAutoEncLightningModule(pl.LightningModule):
             Validation step statistics over the batch.
         """
         X, _ = batch
-        recon = self(X)
+        recon, mu, logvar = self(X)
         return {
             "input": X.detach(),
             "recon": recon.detach(),

@@ -27,27 +27,14 @@ def plot_results(
 
     if "lipschitz" in results_path.lower():
         plt.figure(figsize=(20, 6))
-        correction = results["alpha"]
-        corr_mean, corr_std = [], []
-        for batch in correction:
-            corr_mean.append(np.mean(batch))
-            corr_std.append(np.std(batch, axis=-1, ddof=1))
-        corr_mean, corr_std = np.array(corr_mean), np.array(corr_std)
         plt.axhline(0.0 / (1.0 - 0.0), linestyle="--", color="k", alpha=0.5)
         plt.axhline(0.2 / (1.0 - 0.2), linestyle="--", color="k", alpha=0.5)
         plt.axhline(0.5 / (1.0 - 0.5), linestyle="--", color="k", alpha=0.5)
         plt.axhline(0.8 / (1.0 - 0.8), linestyle="--", color="k", alpha=0.5)
         plt.xlabel("Optimization Step")
-        plt.xlim(0, len(correction) - 1)
+        plt.xlim(0, len(results["alpha"]) - 1)
         plt.ylabel(r"$\alpha/(1-\alpha)$")
-        plt.plot(corr_mean, color="k")
-        plt.fill_between(
-            np.arange(len(correction)),
-            corr_mean - corr_std,
-            corr_mean + corr_std,
-            color="k",
-            alpha=0.5
-        )
+        plt.plot(results["alpha"], color="k")
         if savepath_alpha is None:
             plt.show()
         else:
@@ -55,7 +42,6 @@ def plot_results(
                 savepath_alpha, transparent=True, dpi=600, bbox_inches="tight"
             )
         plt.close()
-        sys.exit(0)
 
     num_images = 5
     idxs = np.linspace(0, X.shape[0] // batch_size, num=num_images, dtype=int)
@@ -122,20 +108,13 @@ def plot_results(
     print("  Surrogate:", y_mean[-1], y_std[-1])
     print("  Oracle:", y_gt_mean[-1], y_gt_std[-1])
     fid = FID(
-        next(iter(dm.test_dataloader()))[0][-(4 * batch_size):],
-        torch.from_numpy(X[-(4 * batch_size):])
+        next(iter(dm.test_dataloader()))[0][-128:],
+        torch.from_numpy(X[-128:])
     )
     print("  FID:", fid.item())
 
 
 if __name__ == "__main__":
-    plot_results(
-        "./digits/docs/alpha=lipschitz.pkl",
-        savepath_img="./digits/docs/alpha=lipschitz_images.png",
-        savepath_plt="./digits/docs/alpha=lipschitz_plot.png",
-        savepath_alpha="./digits/docs/alpha=lipschitz_alpha.png"
-    )
-    sys.exit(0)
     plot_results(
         "./digits/docs/alpha=0.0.pkl",
         savepath_img="./digits/docs/alpha=0.0_images.png",

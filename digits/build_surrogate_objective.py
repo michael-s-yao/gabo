@@ -22,11 +22,14 @@ from experiment.utility import seed_everything, get_device
 
 
 def build_surrogate_objective(
-    seed: int = 42, device: torch.device = torch.device("cpu")
+    autoencoder: Union[Path, str] = "./digits/ckpts/convae.ckpt",
+    seed: int = 42,
+    device: torch.device = torch.device("cpu")
 ) -> float:
     """
     Trains an MLP regressor model as an energy objective estimator.
     Input:
+        autoencoder: path to autoencoder model checkpoint.
         seed: random seed. Default 42.
         device: device to run model training on. Default CPU.
     Returns:
@@ -34,10 +37,10 @@ def build_surrogate_objective(
     """
     seed_everything(seed=seed)
     dm = MNISTDataModule(seed=seed, num_workers=0)
-    surrogate = SurrogateObjective()
+    surrogate = SurrogateObjective(autoencoder)
     callbacks = [ModelCheckpoint(monitor="val_loss", save_weights_only=True)]
     trainer = pl.Trainer(
-        max_epochs=10,
+        max_epochs=100,
         accelerator="auto",
         logger=False,
         callbacks=callbacks,
@@ -67,17 +70,21 @@ def eval_surrogate_objective(
 
     val_errors = []
     for X, _ in dm.val:
-        ypred = model(X.to(device).flatten())
+        z, _, _ = model.convae.model.encode(X.to(device))
+        X = model.convae.model.decode(z)
+        ypred = model(z)
         y = torch.mean(torch.square(X))
         val_errors.append(ypred.item() - y.item())
 
     test_errors = []
     for X, _ in dm.test:
-        ypred = model(X.to(device).flatten())
+        z, _, _ = model.convae.model.encode(X.to(device))
+        X = model.convae.model.decode(z)
+        ypred = model(z)
         y = torch.mean(torch.square(X))
         test_errors.append(ypred.item() - y.item())
-    plt.figure(figsize=(10, 5))
-    bins = np.linspace(-0.01, 0.01, 100)
+    plt.figure(figsize=(10, 4))
+    bins = np.linspace(-0.015, 0.015, 100)
     plt.hist(
         val_errors,
         bins=bins,
@@ -104,4 +111,6 @@ def eval_surrogate_objective(
 
 if __name__ == "__main__":
     build_surrogate_objective(device=get_device())
-    eval_surrogate_objective("./digits/ckpts/surrogate.ckpt")
+    eval_surrogate_objective(
+        "./digits/ckpts/surrogate.ckpt", plotpath="./digits/docs/surrogate.png"
+    )
