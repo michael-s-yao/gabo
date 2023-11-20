@@ -1,8 +1,0 @@
-{
-  "in_dim": 784,
-  "hidden_dims": [128, 32],
-  "lr": 0.01,
-  "c": 0.01,
-  "max_steps": 100,
-  "batch_size": 16
-}

@@ -1,9 +1,0 @@
-{
-  "in_dim": 256,
-  "out_dim": 1,
-  "hidden_dims": [1024, 256, 64],
-  "lr": 0.002,
-  "c": 0.01,
-  "max_steps": 50,
-  "batch_size": 128
-}

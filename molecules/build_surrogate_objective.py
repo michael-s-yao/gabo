@@ -20,14 +20,14 @@ from typing import Optional, Union
 
 sys.path.append(".")
 from models.fcnn import FCNN
-from selfies_vae.data import SELFIESDataModule
-from selfies_vae.vae import InfoTransformerVAE
-from selfies_vae.utils import MoleculeObjective
+from molecules.data import SELFIESDataModule
+from molecules.vae import InfoTransformerVAE
+from molecules.utils import MoleculeObjective
 
 
 def build_objective(
-    hparams: Union[Path, str] = "./selfies_vae/hparams.json",
-    cache_fn: Union[Path, str] = "./selfies_vae/cache.pkl",
+    hparams: Union[Path, str] = "./molecules/hparams.json",
+    cache_fn: Union[Path, str] = "./molecules/cache.pkl",
     seed: int = 42,
     plotpath: Optional[Union[Path, str]] = None,
     savepath: Optional[Union[Path, str]] = None,
@@ -52,7 +52,7 @@ def build_objective(
     vae = InfoTransformerVAE(dm.train).to(device)
     vae.load_state_dict(
         torch.load(
-            "./selfies_vae/ckpts/SELFIES-VAE-state-dict.pt",
+            "./molecules/checkpoints/vae.pt",
             map_location=device
         ),
         strict=True
@@ -143,7 +143,7 @@ def build_objective(
             best_loss, best_epoch = val_loss, epoch
             torch.save(
                 surrogate.state_dict(),
-                f"./selfies_vae/ckpts/{epoch}_surrogate.pt"
+                f"./molecules/checkpoints/{epoch}_surrogate.pt"
             )
         if epoch - best_epoch > hparams["patience"] > 0:
             break

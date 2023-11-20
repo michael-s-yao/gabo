@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 import botorch
+from botorch.utils.transforms import unnormalize
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
@@ -54,7 +55,7 @@ class BOPolicy:
         z: torch.Tensor,
         y: torch.Tensor,
         batch_size: int
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor]:
         """
         Generate a set of candidates with the trust region via multi-start
         optimization.
@@ -63,22 +64,26 @@ class BOPolicy:
             z: prior observations of digits in the autoencoder latent space.
             y: objective values of the prior observations of digits.
             batch_size: number of candidates to return.
+        Returns:
+            z_next: the next set of batch_size observations.
+            bounds: the current search bounds.
         """
         z_center = z[torch.argmax(y), :].clone()
         tr_lb = z_center - (self.init_region_size * self.state.length / 2)
-        tr_lb = torch.maximum(tr_lb, torch.full_like(tr_lb, self.eps))
         tr_ub = z_center + (self.init_region_size * self.state.length / 2)
-        tr_ub = torch.minimum(tr_ub, torch.full_like(tr_ub, 1.0 - self.eps))
         z_next, _ = botorch.optim.optimize_acqf(
             botorch.acquisition.qExpectedImprovement(
                 model, torch.max(y), maximize=self.maximize
             ),
-            bounds=torch.stack([tr_lb, tr_ub]),
+            bounds=torch.stack([
+                torch.zeros_like(tr_lb), torch.ones_like(tr_ub)
+            ]),
             q=batch_size,
             num_restarts=self.num_restarts,
             raw_samples=self.raw_samples,
         )
-        return z_next
+        bounds = torch.stack([tr_lb, tr_ub])
+        return unnormalize(z_next, bounds=bounds), bounds
 
     def update_state(self, y: torch.Tensor) -> None:
         """

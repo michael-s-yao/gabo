@@ -113,12 +113,10 @@ output/
 progress/
 
 # Datasets
-digits/data/MNIST/
-digits/data/__pycache__/
+mnist/data/MNIST/
+mnist/data/__pycache__/
 *.tar.gz
-data/molecules/train_selfie
-data/molecules/val_selfie
-data/molecules/test_selfie
 warfarin/data/*.xls
-selfies_vae/data/
-selfies_vae/state_dict/
+molecules/data/
+molecules/state_dict/
+molecules/checkpoints/

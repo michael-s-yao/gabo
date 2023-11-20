@@ -15,7 +15,7 @@ import torch.optim as optim
 import pytorch_lightning as pl
 from pathlib import Path
 from math import log
-from selfies_vae.data import SELFIESDataModule, SELFIESDataset
+from molecules.data import SELFIESDataModule, SELFIESDataset
 from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -124,7 +124,6 @@ class InfoTransformerVAE(pl.LightningModule):
 
     def __init__(
         self,
-        dataset: SELFIESDataset,
         bottleneck_size: int = 2,
         model_dim: int = 128,
         is_autoencoder: bool = False,
@@ -144,7 +143,6 @@ class InfoTransformerVAE(pl.LightningModule):
     ):
         """
         Args:
-            dataset: dataset to use for model training.
             bottleneck_size: size of the model bottleneck. Default 2.
             model_dim: model dimensions. Default 128.
             is_autoencoder: whether to treat the VAE model as an autoencoder.
@@ -168,7 +166,7 @@ class InfoTransformerVAE(pl.LightningModule):
         """
         super().__init__()
         self.save_hyperparameters(ignore="dataset")
-        self.dataset = dataset
+        self.dataset = SELFIESDataset()
         self.hparams.vocab_size = len(self.dataset.vocab)
 
         self.encoder_embedding_dim = 2 * self.hparams.model_dim

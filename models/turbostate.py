@@ -16,9 +16,9 @@ class TurboState:
 
     def __init__(
         self,
-        length: float = 0.2,
+        length: float = 1.0,
         length_min: float = 0.5 ** 7,
-        length_max: float = 1.0,
+        length_max: float = 10.0,
         failure_patience: int = 5,
         success_patience: int = 10,
     ):

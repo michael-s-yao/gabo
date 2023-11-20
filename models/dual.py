@@ -173,7 +173,7 @@ class Alpha:
             The penalty term to be added to the surrogate objective function.
         """
         sign = -1.0 if self.maximize_surrogate else 1.0
-        return sign * torch.mean(self._wasserstein(P, Q))
+        return sign * self._wasserstein(P, Q)
 
     def _wasserstein(self, P: torch.Tensor, Q: torch.Tensor) -> torch.Tensor:
         """
