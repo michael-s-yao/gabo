@@ -58,7 +58,6 @@ class MoleculePolicy:
             patience: patience used for source critic training. Default 100.
             verbose: whether to print verbose outputs to `stdout`.
         """
-        self.bounds = bounds
         self.ref_dataset = ref_dataset
         self.surrogate = surrogate
         self.constant = alpha
@@ -69,6 +68,7 @@ class MoleculePolicy:
         self.raw_samples = raw_samples
         self.patience = patience
         self.verbose = verbose
+        self.bounds = bounds.to(self.device)
         self.model, self.state_dict = None, None
 
         self.critic = FCNN(
@@ -246,12 +246,12 @@ class MoleculePolicy:
         Returns:
             The optimal z* from the sampled latent space points.
         """
-        z = torch.randn((budget, self.z_dim))
+        z = torch.randn((budget, self.z_dim)).to(self.device)
         z = unnormalize(z.detach(), bounds=self.bounds).requires_grad_(True)
-        self.surrogate(z).backward(torch.ones((budget, 1)))
+        self.surrogate(z).backward(torch.ones((budget, 1)).to(self.device))
         Df = z.grad
         z.requires_grad_(True)
-        self.critic(z).backward(torch.ones((budget, 1)))
+        self.critic(z).backward(torch.ones((budget, 1)).to(self.device))
         Dc = z.grad
         L = ((alpha - 1.0) * Df) - (alpha * Dc)
         return z[torch.argmin(torch.linalg.norm(L, dim=-1))]

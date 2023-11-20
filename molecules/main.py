@@ -189,11 +189,11 @@ if __name__ == "__main__":
     torch.set_default_dtype(torch.float64)
     warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
     warnings.filterwarnings("ignore", category=UserWarning)
-    seed_everything()
+    seed_everything(use_deterministic=False)
 
     device = torch.device("cpu")
     if torch.cuda.is_available():
-        device = torch.device("cuda")
+        device = torch.device("cuda:0")
 
     parser = argparse.ArgumentParser(description="Molecule GABO Experiments")
     parser.add_argument(
