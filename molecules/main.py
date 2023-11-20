@@ -31,9 +31,9 @@ from experiment.utility import seed_everything
 
 def main(
     alpha: Optional[float] = None,
-    budget: int = 512,
+    budget: int = 256,
     batch_size: int = 16,
-    z_bound: float = 5.0,
+    z_bound: float = 8.0,
     vae_ckpt: Union[Path, str] = "./molecules/checkpoints/vae.pt",
     surrogate_ckpt: Union[Path, str] = "./molecules/checkpoints/surrogate.pt",
     device: torch.device = torch.device("cpu"),
