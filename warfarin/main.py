@@ -8,11 +8,10 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import argparse
 import json
-import matplotlib.pyplot as plt
 import numpy as np
+import pickle
 import sys
 import torch
-import torch.optim as optim
 from tqdm import tqdm
 
 sys.path.append(".")
@@ -21,9 +20,7 @@ from warfarin.dataset import WarfarinDataset
 from warfarin.dosing import WarfarinDose
 from warfarin.policy import DosingPolicy
 from warfarin.transform import PowerNormalizeTransform
-from warfarin.metrics import Divergence, SupportCoverage
 from models.lipschitz import FrozenMLPRegressor
-from models.critic import WeightClipper
 from experiment.utility import seed_everything
 
 
@@ -50,12 +47,6 @@ def build_args() -> argparse.Namespace:
         help="Path to surrogate cost function."
     )
     parser.add_argument(
-        "--max_critic_per_epoch",
-        type=int,
-        default=500,
-        help="Maximum number of iterative steps to train the critic per epoch."
-    )
-    parser.add_argument(
         "--hparams",
         type=str,
         default="./warfarin/hparams.json",
@@ -66,12 +57,6 @@ def build_args() -> argparse.Namespace:
         type=int,
         default=100,
         help="Number of batches to sample and optimizer over. Default 100."
-    )
-    parser.add_argument(
-        "--patience",
-        type=int,
-        default=-1,
-        help="Patience for early stopping. By default, no early stopping."
     )
     parser.add_argument(
         "--savepath",
@@ -98,12 +83,6 @@ def build_args() -> argparse.Namespace:
         help="Maximum safe warfarin dose in units of mg/week. Default 315."
     )
     parser.add_argument(
-        "--num_in_distribution",
-        type=int,
-        default=16,
-        help="Number of in-distribution samples used to estimate OOD distance."
-    )
-    parser.add_argument(
         "--batch_size", type=int, default=16, help="Batch size. Default 16."
     )
     parser.add_argument(
@@ -115,7 +94,6 @@ def build_args() -> argparse.Namespace:
 
 def main():
     args = build_args()
-    rng = np.random.RandomState(args.seed)
 
     # Load the surrogate objective function.
     dataset = WarfarinDataset(seed=args.seed)
@@ -156,7 +134,6 @@ def main():
     X_test = policy(X_test)
     policy.fit_critic(X_test)
 
-    best_cost, best_epoch = 1e12, None
     preds, gts = [], []
     with tqdm(
         range(args.num_epochs), desc="Optimizing Warfarin Dose", leave=False
@@ -189,60 +166,29 @@ def main():
             policy.reset()
 
             # Calculate statistics.
-            pred_costs = transform.invert(np.squeeze(surrogate(X_test)))
-            cost = np.mean(pred_costs)
-            preds.append((cost, np.std(pred_costs, ddof=1)))
+            preds.append(transform.invert(np.squeeze(surrogate(X_test))))
 
             gt_costs = dosage_cost(
                 col_transforms[dataset.dose].invert(X_test[dataset.dose]),
                 oracle(X_test)
             )
-            gts.append((np.mean(gt_costs), np.std(gt_costs, ddof=1)))
-
-            if args.patience > 0:
-                if cost < best_cost:
-                    best_cost, best_epoch = cost, i
-                if i - best_epoch > args.patience:
-                    break
+            gts.append(gt_costs)
 
             # Fit the source critic.
             if i % 4 == 0:
                 policy.fit_critic(X_test)
 
-    print("Surrogate Cost:", preds[-1][0], preds[-1][1] / np.sqrt(len(X_test)))
-    print("Oracle Cost:", gts[-1][0], gts[-1][1] / np.sqrt(len(X_test)))
-    doses_gen = col_transforms[dataset.dose].invert(policy.optimum())
-    doses_true = col_transforms[dataset.dose].invert(X_test[dataset.dose])
-    print("Support Coverage:", SupportCoverage(doses_true, doses_gen))
-    print("JS Divergence:", Divergence(doses_true, doses_gen))
-
-    # Plot relevant metrics.
-    preds = (
-        np.array([mean for mean, _ in preds]),
-        np.array([std for _, std in preds]) / np.sqrt(len(X_test))
-    )
-    gts = (
-        np.array([mean for mean, _ in gts]),
-        np.array([std for _, std in gts]) / np.sqrt(len(X_test))
-    )
-    plt.figure(figsize=(10, 5))
-    steps = args.batch_size * np.arange(len(preds[0]))
-    for (mean, sem), label in zip([preds, gts], ["Surrogate", "Oracle"]):
-        plt.plot(steps, mean, label=label)
-        plt.fill_between(steps, mean - sem, mean + sem, alpha=0.1)
-    plt.xlabel("Optimization Steps")
-    plt.ylabel("Warfarin-Associated Dosage Cost")
-    plt.xlim(np.min(steps), np.max(steps))
-    plt.ylim(0, 1000)
-    plt.legend()
-    if args.savepath is None:
-        plt.show()
-    else:
-        plt.savefig(
-            args.savepath, dpi=600, transparent=True, bbox_inches="tight"
-        )
-    plt.close()
-    return
+    # Save optimization results.
+    if args.savepath is not None:
+        with open(args.savepath, mode="wb") as f:
+            results = {
+                "X": X_test,
+                "preds": preds,
+                "gt": gts,
+                "alpha": np.array(a),
+                "batch_size": args.batch_size,
+            }
+            pickle.dump(results, f)
 
 
 if __name__ == "__main__":

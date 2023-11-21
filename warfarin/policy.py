@@ -11,11 +11,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from sklearn import gaussian_process as gp
-from scipy.stats import norm
-from scipy.optimize import minimize
-from botorch.utils.transforms import normalize, unnormalize
-from botorch.models.transforms import Standardize
 from math import isclose
 from tqdm import tqdm
 from typing import Optional
@@ -74,14 +69,6 @@ class DosingPolicy:
         self.critic.eval()
         self.clipper = WeightClipper(c=0.1)
         self.optimizer = torch.optim.SGD(self.critic.parameters(), lr=0.1)
-
-        self.model = gp.GaussianProcessRegressor(
-            kernel=gp.kernels.Matern(),
-            alpha=1e-5,
-            n_restarts_optimizer=self.num_restarts,
-            normalize_y=True,
-            random_state=seed
-        )
 
     def __call__(self, X: pd.DataFrame) -> pd.DataFrame:
         """
