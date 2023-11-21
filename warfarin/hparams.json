@@ -1,17 +1,5 @@
 {
-  "DecisionTreeRegressor": {
-    "max_depth": null,
-    "min_samples_split": 4,
-    "min_samples_leaf": 1,
-    "max_leaf_nodes": 64,
-    "p": 0.25
-  },
-  "Lasso": {
-    "alpha": 0.001,
-    "max_iter": 1000000,
-    "p": 0.5
-  },
-  "MLPRegressor": {
+  "Surrogate": {
     "hidden_layer_sizes": [128, 128],
     "batch_size": 16,
     "max_iter": 500,
@@ -21,20 +9,10 @@
     "p": 0.5
   },
   "SourceCritic": {
-    "model": {
-      "in_dim": 33,
-      "hidden_dims": [128, 128],
-      "out_dim": 1,
-      "dropout": 0.1,
-      "final_activation": null
-    },
-    "optimizer": {
-      "lr": 0.0001,
-      "weight_decay": 1e-6,
-      "maximize": true
-    }
-  },
-  "WeightClipper": {
-    "c": 0.01
+    "in_dim": 33,
+    "hidden_dims": [128, 128],
+    "out_dim": 1,
+    "dropout": 0.1,
+    "final_activation": null
   }
 }

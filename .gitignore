@@ -111,6 +111,7 @@ ckpts/
 wandb/
 output/
 progress/
+molecules/docs/
 
 # Datasets
 mnist/data/MNIST/

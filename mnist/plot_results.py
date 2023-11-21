@@ -1,3 +1,11 @@
+"""
+Analyze results from MNIST-related training.
+
+Author(s):
+    Michael Yao
+
+Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+"""
 import sys
 import pickle
 import matplotlib.pyplot as plt
