@@ -5,6 +5,3 @@
 [submodule "fcd_torch"]
 	path = fcd_torch
 	url = https://github.com/insilicomedicine/fcd_torch.git
-[submodule "auto_LiRPA"]
-	path = auto_LiRPA
-	url = https://github.com/Verified-Intelligence/auto_LiRPA
