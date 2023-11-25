@@ -7,6 +7,7 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import sys
+import os
 import pickle
 import matplotlib.pyplot as plt
 import numpy as np
@@ -123,40 +124,57 @@ def plot_results(
     )
 
 
+def main(
+    results_dir: Union[Path, str] = "mnist/docs/final",
+    savepath: Optional[Union[Path, str]] = None
+):
+    directory, _, fns = next(os.walk(results_dir))
+    fns = [os.path.join(directory, f) for f in fns]
+    alphas = {a: [] for a in ["0.0", "0.2", "0.5", "0.8", "1.0", "Ours"]}
+    for f in fns:
+        key = f.split("=")[1].split("_")[0]
+        if "pkl" in key:
+            alphas["Ours"].append(f)
+        elif key in alphas.keys():
+            alphas[key].append(f)
+
+    print("     |    Surrogate   |     Oracle")
+    print("----------------------------------------")
+    for a, fns in alphas.items():
+        surr, best = [], []
+        for pkl in fns:
+            with open(pkl, "rb") as f:
+                results = pickle.load(f)
+            y, y_gt = np.squeeze(results["y"]), np.squeeze(results["y_gt"])
+            idxs = np.argsort(y)
+            surr += [y[idxs][-1]]
+            best += [y_gt[idxs][-1]]
+        best = np.array(best)
+
+        padding = " " if np.mean(surr) > 0.0 else ""
+        a = a + " " if a != "Ours" else a
+        print(
+            f"{a} | {padding}{np.mean(surr):.2f} +/- {np.std(surr):.2f} |",
+            f"{np.mean(best):.2f} +/- {np.std(best):.2f}"
+        )
+
+    a = []
+    for pkl in alphas["Ours"]:
+        with open(pkl, "rb") as f:
+            results = pickle.load(f)
+        a += results["alpha"].tolist()
+    a = np.array(a).reshape(len(alphas["Ours"]), -1)
+    plt.figure(figsize=(10, 5))
+    plt.plot(1 + np.arange(a.shape[-1]), np.mean(a, axis=0), color="k")
+    plt.xlabel("Optimization Step")
+    plt.ylabel(r"$\alpha$")
+    plt.ylim(0.0, 1.0)
+    if savepath is None:
+        plt.show()
+    else:
+        plt.savefig(savepath, dpi=600, bbox_inches="tight", transparent=True)
+    plt.close()
+
+
 if __name__ == "__main__":
-    plot_results(
-        "./mnist/docs/alpha=0.0.pkl",
-        vae_ckpt="./mnist/checkpoints/mnist_vae.pt",
-        savepath_img="./mnist/docs/alpha=0.0_images.png",
-        savepath_plt="./mnist/docs/alpha=0.0_plot.png"
-    )
-    plot_results(
-        "./mnist/docs/alpha=0.2.pkl",
-        vae_ckpt="./mnist/checkpoints/mnist_vae.pt",
-        savepath_img="./mnist/docs/alpha=0.2_images.png",
-        savepath_plt="./mnist/docs/alpha=0.2_plot.png"
-    )
-    plot_results(
-        "./mnist/docs/alpha=0.5.pkl",
-        vae_ckpt="./mnist/checkpoints/mnist_vae.pt",
-        savepath_img="./mnist/docs/alpha=0.5_images.png",
-        savepath_plt="./mnist/docs/alpha=0.5_plot.png"
-    )
-    plot_results(
-        "./mnist/docs/alpha=0.8.pkl",
-        vae_ckpt="./mnist/checkpoints/mnist_vae.pt",
-        savepath_img="./mnist/docs/alpha=0.8_images.png",
-        savepath_plt="./mnist/docs/alpha=0.8_plot.png"
-    )
-    plot_results(
-        "./mnist/docs/alpha=1.0.pkl",
-        vae_ckpt="./mnist/checkpoints/mnist_vae.pt",
-        savepath_img="./mnist/docs/alpha=1.0_images.png",
-        savepath_plt="./mnist/docs/alpha=1.0_plot.png"
-    )
-    plot_results(
-        "./mnist/docs/alpha.pkl",
-        vae_ckpt="./mnist/checkpoints/mnist_vae.pt",
-        savepath_img="./mnist/docs/alpha_images.png",
-        savepath_plt="./mnist/docs/alpha_plot.png"
-    )
+    main()

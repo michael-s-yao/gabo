@@ -24,14 +24,10 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 import numpy as np
 import pandas as pd
 import pickle
-import sys
 import torch
 import torch.nn as nn
 from pathlib import Path
-from typing import Optional, Union
-
-sys.path.append("auto_LiRPA")
-from auto_LiRPA import BoundedModule, BoundedTensor, PerturbationLpNorm
+from typing import Union
 
 
 class FrozenMLPRegressor(nn.Module):
@@ -72,92 +68,3 @@ class FrozenMLPRegressor(nn.Module):
         if isinstance(X, (np.ndarray, pd.DataFrame)):
             return self.np_model.predict(X)
         return self.torch_model(X)
-
-
-class Lipschitz(nn.Module):
-    """Computes an upper bound on the Lipschitz constant."""
-
-    def __init__(
-        self,
-        model: nn.Module,
-        mode: Optional[str] = "global",
-        p: int = torch.inf,
-        eps: float = 0.1
-    ):
-        """
-        Args:
-            model: neural network to compute an upper bound on the Lipschitz
-                constant of.
-            mode: one of [`global`, `local`, None].
-        """
-        super().__init__()
-        self.model = model
-        self.mode = mode
-        if self.mode not in ["global", "local", None]:
-            raise NotImplementedError(f"Unrecognized mode {mode}.")
-        elif self.mode == "global":
-            self._lipshitz = self._global_lipschitz
-        elif self.mode == "local":
-            self._lipshitz = self._local_lipschitz
-        self.p = p
-        self.eps = eps
-
-    def forward(
-        self, X: Optional[torch.Tensor] = None
-    ) -> Union[np.ndarray, float]:
-        """
-        Computes an upper bound on the Lipschitz constant.
-        Input:
-            X: batch of model inputs.
-        Returns:
-            The estimated upper bound of the Lipschitz constant(s).
-        """
-        if self.mode is None:
-            return torch.zeros(X.size(dim=0)).to(X).detach().cpu().numpy()
-        return self._lipshitz(X)
-
-    def _local_lipschitz(self, X: torch.Tensor) -> np.ndarray:
-        """
-        Computes an upper bound on the local Lipschitz constant at the input.
-        Input:
-            X: batch of model inputs.
-        Returns:
-            The estimated upper bound of the local Lipschitz constants.
-        """
-        model = BoundedModule(self.model, X)
-        model.augment_gradient_graph(X)
-        X = BoundedTensor(X, PerturbationLpNorm(norm=self.p, eps=self.eps))
-        Lb, Ub = model.compute_jacobian_bounds(X)
-        Lb, Ub = Lb.reshape(*X.size()), Ub.reshape(*X.size())
-        Mb = torch.maximum(torch.abs(Lb), torch.abs(Ub))
-        return torch.norm(Mb, p=self.p, dim=-1).detach().cpu().numpy()
-
-    def _global_lipschitz(self, *args, **kwargs) -> float:
-        """
-        Computes an upper bound on the global Lipschitz constant of the model.
-        Input:
-            None.
-        Returns:
-            The estimated upper bound of the global Lipschitz constant.
-        """
-        return np.prod([
-            self._spectral_norm(param)
-            for name, param in self.model.named_parameters()
-            if "weight" in name
-        ])
-
-    def _spectral_norm(self, W: torch.Tensor, num_iter: int = 100) -> float:
-        """
-        Approximates the spectral norm of a matrix using the power method.
-        Input:
-            W: input matrix to approximate the spectral norm of.
-            num_iter: maximum number of iterations for the power method.
-        Returns:
-            The estimated spectral norm of the input matrix.
-        """
-        b_k = torch.randn(W.size(dim=-1)).to(W)
-        for _ in range(num_iter):
-            b_k1 = torch.squeeze(W.T @ W @ b_k)
-            b_k = b_k1 / torch.norm(b_k1, p=self.p)
-        eig = torch.norm(W.T @ W @ b_k, p=self.p) / torch.norm(b_k, p=self.p)
-        return torch.sqrt(eig).item()

@@ -120,11 +120,11 @@ class Oracle:
         Returns:
             None.
         """
-        plot_config()
+        plot_config(fontsize=20)
         x1 = np.linspace(min(self.x1_range), max(self.x1_range), num=1000)
         x2 = np.linspace(min(self.x2_range), max(self.x2_range), num=1000)
         x1, x2 = np.meshgrid(x1, x2)
-        plt.figure(figsize=(10, 10))
+        plt.figure()
         plt.contour(x1, x2, self(x1, x2), levels=100, cmap="jet")
         plt.xlabel(r"$x_1$")
         plt.ylabel(r"$x_2$")

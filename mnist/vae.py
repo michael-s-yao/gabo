@@ -9,6 +9,7 @@ https://github.com/pytorch/examples/blob/main/vae/main.py
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
+import argparse
 import matplotlib.pyplot as plt
 import math
 import sys
@@ -284,9 +285,16 @@ def test(
 
 
 if __name__ == "__main__":
-    seed_everything()
-    device = get_device()
-    model_path = "./mnist/checkpoints/mnist_vae.pt"
+    parser = argparse.ArgumentParser(description="MNIST VAE Training")
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed. Default 42."
+    )
+    seed = parser.parse_args().seed
+
+    torch.set_default_dtype(torch.float64)
+    seed_everything(seed)
+    device = get_device("cpu")
+    model_path = f"./mnist/checkpoints/mnist_vae_{seed}.pt"
     fit(savepath=model_path, device=device)
-    test(model_path, mode="recon", savepath="./mnist/docs/vae_recon.png")
-    test(model_path, mode="sample", savepath="./mnist/docs/vae_sample.png")
+    # test(model_path, mode="recon", savepath="./mnist/docs/vae_recon.png")
+    # test(model_path, mode="sample", savepath="./mnist/docs/vae_sample.png")

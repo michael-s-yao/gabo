@@ -6,6 +6,7 @@ Author(s):
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
+import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
@@ -167,12 +168,19 @@ def test(
 
 
 if __name__ == "__main__":
-    seed_everything()
-    device = get_device("cpu")
-    model_path = "./mnist/checkpoints/mnist_surrogate.pt"
-    fit(savepath=model_path, device=device)
-    test(
-        checkpoint=model_path,
-        device=device,
-        savepath="./mnist/docs/surrogate.png"
+    parser = argparse.ArgumentParser(description="MNIST VAE Training")
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed. Default 42."
     )
+    seed = parser.parse_args().seed
+
+    torch.set_default_dtype(torch.float64)
+    seed_everything(seed)
+    device = get_device("cpu")
+    model_path = f"./mnist/checkpoints/mnist_surrogate_{seed}.pt"
+    fit(savepath=model_path, device=device)
+    # test(
+    #     checkpoint=model_path,
+    #     device=device,
+    #     savepath="./mnist/docs/surrogate.png"
+    # )

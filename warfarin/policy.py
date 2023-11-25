@@ -14,6 +14,14 @@ import torch.nn as nn
 from math import isclose
 from tqdm import tqdm
 from typing import Optional
+from botorch.models import SingleTaskGP
+from botorch.utils.transforms import normalize, unnormalize
+from botorch.optim import optimize_acqf
+from botorch import fit_gpytorch_mll
+from botorch.acquisition.monte_carlo import qExpectedImprovement
+from gpytorch.mlls.exact_marginal_log_likelihood import (
+    ExactMarginalLogLikelihood
+)
 
 sys.path.append(".")
 from models.fcnn import FCNN
@@ -31,8 +39,10 @@ class DosingPolicy:
         max_z_dose: float,
         alpha: Optional[float] = None,
         seed: int = 42,
-        save_best_on_reset: bool = True,
+        device: torch.device = torch.device("cpu"),
+        batch_size: int = 4,
         num_restarts: int = 10,
+        raw_samples: int = 256,
         patience: int = 100,
         verbose: bool = True,
         **critic_hparams
@@ -45,9 +55,11 @@ class DosingPolicy:
             max_z_dose: maximum warfarin dose (after normalization is applied).
             alpha: optional constant value for alpha.
             seed: random seed. Default 42.
-            save_best_on_reset: whether to save the best losses on reset.
+            device: device. Default CPU.
+            batch_size: batch size. Default 4.
             num_restarts: number of starting points for multistart acquisition
                 function optimization.
+            raw_samples: number of samples for initialization.
             patience: patience for source critic training. Default 100.
             verbose: whether to print verbose outputs to `stdout`.
         """
@@ -56,116 +68,109 @@ class DosingPolicy:
         self.min_z_dose, self.max_z_dose = min_z_dose, max_z_dose
         self.constant = alpha
         self.seed = seed
-        self.save_best_on_reset = save_best_on_reset
+        self.device = device
+        self.batch_size = batch_size
         self.num_restarts = num_restarts
+        self.raw_samples = raw_samples
         self.patience = patience
         self.verbose = verbose
         self.rng = np.random.RandomState(seed=self.seed)
         self.dose_key = "Therapeutic Dose of Warfarin"
-        self.arg_best, self.best_loss, self.cache = None, None, []
+        self.bounds = torch.tensor(
+            [[self.min_z_dose], [self.max_z_dose]], device=self.device
+        )
 
         self.critic = FCNN(**critic_hparams)
         self.critic = self.critic
         self.critic.eval()
-        self.clipper = WeightClipper(c=0.1)
-        self.optimizer = torch.optim.SGD(self.critic.parameters(), lr=0.1)
+        self.clipper = WeightClipper(c=0.05)
+        self.optimizer = torch.optim.SGD(self.critic.parameters(), lr=0.01)
 
-    def __call__(self, X: pd.DataFrame) -> pd.DataFrame:
-        """
-        Perturbs the warfarin dose of the table of patients and returns the
-        the resulting perturbed sample.
-        Input:
-            X: a DataFrame of patent data.
-        Returns:
-            A DataFrame of perturbed patient data.
-        """
-        X[self.dose_key] = self._generate_doses(len(X))
-        self.cache.append(X[self.dose_key])
-        return X
+        self.state_dicts = None
 
-    def __len__(self) -> int:
+    def __call__(
+        self, X: pd.DataFrame, y: torch.Tensor, step: Optional[int] = None
+    ) -> torch.Tensor:
         """
-        Returns the number of times that the sampler has been called.
+        Acquires a new set of warfarin doses to acquire.
         Input:
-            None.
+            X: a DataFrame of patient data.
+            y: an BN tensor of the patient cost values, where B is the number
+                of patients and N is the number of observed cost values so far.
+            step: optional optimization step.
         Returns:
-            The number of times that the sampler has been called.
+            new_z: a set of new candidate values of shape Bx(batch_size).
         """
-        return len(self.cache)
-
-    def reset(self) -> None:
-        """
-        Resets the sampler.
-        Input:
-            None.
-        Returns:
-            None.
-        """
-        if self.save_best_on_reset:
-            self.best_loss, self.cache = self.optimum(), [self.optimum()]
-            self.arg_best = np.zeros(len(self.arg_best), dtype=int)
-            return
-        self.arg_best, self.best_loss, self.cache = None, None, []
-
-    def feedback(self, loss: np.ndarray) -> None:
-        """
-        Keeps track of the best generated warfarin doses for each patient based
-        on an input updated metric.
-        Input:
-            loss: predicted loss of the most recently generated warfarin dose.
-        Returns:
-            None.
-        """
-        if self.arg_best is None or self.best_loss is None:
-            self.best_loss = loss
-            self.arg_best = np.zeros_like(loss, dtype=int)
-            return
-        self.arg_best = np.where(
-            loss < self.best_loss, len(self) - 1, self.arg_best
+        new_z = torch.empty(
+            (len(self.bo_models), self.batch_size, 1), device=self.device
         )
+        # Optimize the acquisition function.
+        for idx, (model, yy) in enumerate(
+            tqdm(
+                zip(self.bo_models, -y),
+                desc=f"Optimizing Warfarin Doses (Step {step})",
+                total=len(self.bo_models),
+                leave=False
+            )
+        ):
+            best_y = torch.max(y.to(self.device))
+            candidates, _ = optimize_acqf(
+                acq_function=qExpectedImprovement(model=model, best_f=best_y),
+                bounds=torch.stack([
+                    torch.zeros(1).to(self.device),
+                    torch.ones(1).to(self.device)
+                ]),
+                q=self.batch_size,
+                num_restarts=self.num_restarts,
+                raw_samples=self.raw_samples,
+            )
+            new_z[idx] = unnormalize(candidates.detach(), bounds=self.bounds)
+        # Return new dose values to sample.
+        return torch.squeeze(new_z, dim=-1)
 
-    def optimum(self) -> np.ndarray:
+    def fit(self, z: torch.Tensor, y: torch.Tensor) -> None:
         """
-        Returns the optimal warfarin dosing found for each patient based on
-        the available sampling history.
+        Fit a SingleTaskGP model to a set of input observations.
         Input:
+            z: previous normalized dose observations.
+            y: corresponding observations of the surrogate cost.
+        Returns:
             None.
-        Returns:
-            A vector containing the optimal warfarin dosing for each patient.
         """
-        opt, cache = np.zeros(len(self.arg_best)), np.array(self.cache)
-        for i in range(len(self.arg_best)):
-            opt[i] = cache[self.arg_best[i], i]
-        return opt
+        self.bo_models = [
+            SingleTaskGP(zz.unsqueeze(dim=-1), yy.unsqueeze(dim=-1))
+            for zz, yy in zip(normalize(z, bounds=self.bounds), y)
+        ]
+        if self.state_dicts is not None and len(self.state_dicts) > 0:
+            [
+                model.load_state_dict(state_dict)
+                for model, state_dict in zip(self.bo_models, self.state_dicts)
+            ]
+        [
+            fit_gpytorch_mll(
+                ExactMarginalLogLikelihood(
+                    likelihood=model.likelihood, model=model
+                ).to(self.device)
+            )
+            for model in self.bo_models
+        ]
+        self.state_dicts = [model.state_dict() for model in self.bo_models]
 
-    def _generate_doses(self, n: int) -> np.ndarray:
-        """
-        Generates a vector of n valid random doses.
-        Input:
-            n: number of random doses to generate.
-        Returns:
-            A vector of n valid random doses.
-        """
-        m, b = self.max_z_dose - self.min_z_dose, self.min_z_dose
-        return (m * self.rng.rand(n)) + b
-
-    def fit_critic(self, X: pd.DataFrame) -> None:
+    def fit_critic(self, X: pd.DataFrame, z: torch.Tensor) -> None:
         """
         Trains the critic until the Wasserstein distance stops improving
         according to a preset relative tolerance.
         Input:
             X: a generated dataset of shape BN, where B is the batch size and
                 N is the number of patient features.
+            z: a generated dataset of shape BD, where B is the batch size and
+                D is the number of dose observations.
         Returns:
             None.
         """
         self.critic.train()
         num_steps = 0
         cache = [-1e12] * self.patience
-        P = torch.from_numpy(self.dataset.to_numpy().astype(np.float64))
-        Q = torch.from_numpy(X.to_numpy().astype(np.float64))
-        param = next(self.critic.parameters())
-        P, Q = P.to(param), Q.to(param)
         with tqdm(
             generator(),
             desc="Training Source Critic",
@@ -173,7 +178,7 @@ class DosingPolicy:
         ) as pbar:
             for _ in pbar:
                 self.critic.zero_grad()
-                negWd = -1.0 * torch.mean(self.wasserstein(P, Q))
+                negWd = -1.0 * torch.mean(self.wasserstein(X, z))
                 negWd.backward()
                 self.optimizer.step()
                 self.clipper(self.critic)
@@ -185,19 +190,44 @@ class DosingPolicy:
                 pbar.set_postfix(Wd=Wd)
         self.critic.eval()
 
-    def wasserstein(self, P: torch.Tensor, Q: torch.Tensor) -> torch.Tensor:
+    def wasserstein(self, X: pd.DataFrame, z: torch.Tensor) -> torch.Tensor:
         """
         Calculates the Wasserstein distance contribution from each datum in the
         batch of generated samples Q.
         Input:
-            P: a reference dataset of shape BN, where B is the batch size and
-                N is the input dimension into the critic function.
-            Q: a dataset of generated samples of shape BN, where B is the batch
-                size and N is the input dimension into the critic function.
+            X: a generated dataset of shape BN, where B is the batch size and
+                N is the number of patient features.
+            z: a generated dataset of shape BD, where B is the batch size and
+                D is the number of dose observations.
         Returns:
             The Wasserstein distance contribution from each datum in Q.
         """
-        return torch.mean(self.critic(P)) - self.critic(Q).squeeze(dim=-1)
+        X = pd.concat([X] * z.size(dim=-1))
+        X[self.dose_key] = z.flatten().detach().cpu().numpy()
+        P = torch.from_numpy(self.dataset.to_numpy().astype(np.float64))
+        Q = torch.from_numpy(X.to_numpy().astype(np.float64))
+        param = next(self.critic.parameters())
+        P, Q = P.to(param), Q.to(param)
+        Wd = torch.mean(self.critic(P)) - torch.squeeze(self.critic(Q), dim=-1)
+        return Wd.reshape(*z.size())
+
+    def surrogate_cost(self, X: pd.DataFrame, z: torch.Tensor) -> torch.Tensor:
+        """
+        Calculates the unpenalized cost estimate according to the surrogate
+        function given a set of patient doses and covariates.
+        Input:
+            X: a DataFrame containing the set of patient covariates.
+            z: a tensor containing the normalized dose estimates for each
+                patient.
+        Returns:
+            The unpenalized cost estimates for each dose and patient.
+        """
+        X = pd.concat([X] * z.size(dim=-1))
+        X[self.dose_key] = z.flatten().detach().cpu().numpy()
+        cost = self.surrogate(
+            torch.from_numpy(X.to_numpy().astype(np.float64))
+        )
+        return cost.reshape(*z.size())
 
     def alpha(self) -> float:
         """
@@ -226,9 +256,8 @@ class DosingPolicy:
         """
         P = torch.from_numpy(self.dataset.to_numpy().astype(np.float64))
         zstar = self._search(alpha).detach()
-        score = ((1.0 - alpha) * self.surrogate(zstar)) + (
-            alpha * self.wasserstein(P, zstar.unsqueeze(dim=0))
-        )
+        Wd = torch.mean(self.critic(P)) - self.critic(zstar.unsqueeze(dim=0))
+        score = ((1.0 - alpha) * self.surrogate(zstar)) + (alpha * Wd)
         return score.item()
 
     def _search(self, alpha: float, budget: int = 4096) -> np.ndarray:
@@ -241,7 +270,6 @@ class DosingPolicy:
         Returns:
             The optimal z* from the sampled latent space points.
         """
-        z = self.rng.randn(budget, self.dataset.shape[-1])
         z = self.rng.rand(budget, self.dataset.shape[-1])
         dose = list(self.dataset.columns).index(self.dose_key)
         z[:, dose] = self.min_z_dose + (

@@ -12,7 +12,12 @@ import numpy as np
 import pickle
 import sys
 import torch
-from tqdm import tqdm
+import warnings
+from math import ceil
+from botorch.utils.transforms import unnormalize
+from botorch.exceptions.warnings import (
+    BadInitialCandidatesWarning, InputDataWarning
+)
 
 sys.path.append(".")
 from warfarin.cost import dosage_cost
@@ -53,12 +58,6 @@ def build_args() -> argparse.Namespace:
         help="Path to JSON file with surrogate cost hyperparameters."
     )
     parser.add_argument(
-        "--num_epochs",
-        type=int,
-        default=100,
-        help="Number of batches to sample and optimizer over. Default 100."
-    )
-    parser.add_argument(
         "--savepath",
         type=str,
         default=None,
@@ -83,7 +82,18 @@ def build_args() -> argparse.Namespace:
         help="Maximum safe warfarin dose in units of mg/week. Default 315."
     )
     parser.add_argument(
-        "--batch_size", type=int, default=16, help="Batch size. Default 16."
+        "--batch_size", type=int, default=8, help="Batch size. Default 8."
+    )
+    ngpc_help = "Number of times to sample doses before retraining the source "
+    ngpc_help += "critic. Default 4."
+    parser.add_argument(
+        "--num_generator_per_critic", type=int, default=4, help=ngpc_help
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=64,
+        help="Total sampling budget per patient. Default 64."
     )
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed. Default 42."
@@ -102,91 +112,92 @@ def main():
     with open(args.hparams, "rb") as f:
         hparams = json.load(f)
         critic_hparams = hparams["SourceCritic"]
-        p = hparams["Surrogate"]["p"]
 
     # Initialize the sampling policy and data transforms.
     X_train, pred_dose_train = dataset.train_dataset
     X_test, pred_dose_test = dataset.test_dataset
-    gt_dose_train = oracle(X_train)
-    cost_train = dosage_cost(pred_dose_train, gt_dose_train)
-    transform = PowerNormalizeTransform(cost_train, p)
-
     col_transforms = {}
     for col in [dataset.height, dataset.weight, dataset.dose]:
         t_col = PowerNormalizeTransform(X_train, p=1, key=col)
         X_train = t_col(X_train)
         X_test = t_col(X_test)
         col_transforms[col] = t_col
-
-    # Choose the initial set of observations.
     z_range = col_transforms[dataset.dose](np.array([0, args.thresh_max]))
     min_z_dose = max(np.min(z_range), args.min_z_dose)
     max_z_dose = min(np.max(z_range), args.max_z_dose)
-    a = []
+
     policy = DosingPolicy(
         ref_dataset=X_train.astype(np.float64),
         surrogate=surrogate,
         min_z_dose=min_z_dose,
         max_z_dose=max_z_dose,
         seed=args.seed,
+        batch_size=args.batch_size,
         **critic_hparams
     )
-    X_test = policy(X_test)
-    policy.fit_critic(X_test)
 
-    preds, gts = [], []
-    with tqdm(
-        range(args.num_epochs), desc="Optimizing Warfarin Dose", leave=False
-    ) as pbar:
-        for i, _ in enumerate(pbar):
-            # Sample according to the policy.
-            for _ in range(args.batch_size):
-                X_test = policy(X_test)
-                alpha = policy.alpha()
-                cost = surrogate(
-                    torch.from_numpy(X_test.to_numpy().astype(np.float64))
-                )
-                penalty = torch.unsqueeze(
-                    policy.wasserstein(
-                        torch.from_numpy(
-                            policy.dataset.to_numpy().astype(np.float64)
-                        ),
-                        torch.from_numpy(
-                            X_test.to_numpy().astype(np.float64)
-                        )
-                    ),
-                    dim=-1
-                )
-                y = ((1.0 - alpha) * cost) + (alpha * penalty)
-                y = torch.squeeze(y, dim=-1).detach().cpu().numpy()
-                policy.feedback(y)
+    # Choose the initial set of observations.
+    a = []
+    z = unnormalize(
+        torch.rand(X_test.shape[0], args.batch_size, device=policy.device),
+        bounds=torch.tensor(
+            [[policy.min_z_dose], [policy.max_z_dose]], device=policy.device
+        )
+    )
+    policy.fit_critic(X_test, z)
+    alpha = policy.alpha()
+    a.append(alpha)
+    y = (1.0 - alpha) * policy.surrogate_cost(X_test, z) + (
+        alpha * policy.wasserstein(X_test, z)
+    )
+    y_gt = dosage_cost(
+        col_transforms[dataset.dose].invert(
+            z.flatten().detach().cpu().numpy()
+        ),
+        np.tile(oracle(X_test), y.size(dim=-1))
+    )
+    y_gt = y_gt.reshape(*tuple(y.size()))
 
-            optimal_doses = policy.optimum()
-            X_test[policy.dose_key] = optimal_doses
-            policy.reset()
+    # Generative adversarial Bayesian optimization.
+    for step in range(ceil(args.budget / args.batch_size) - 1):
+        policy.fit(z.detach(), y.detach())
 
-            # Calculate statistics.
-            preds.append(transform.invert(np.squeeze(surrogate(X_test))))
+        # Optimize and get new observations.
+        new_z = policy(X_test, y, step)
 
-            gt_costs = dosage_cost(
-                col_transforms[dataset.dose].invert(X_test[dataset.dose]),
-                oracle(X_test)
-            )
-            gts.append(gt_costs)
+        # Calculate the surrogate and oracle objective values.
+        alpha = policy.alpha()
+        a.append(alpha)
+        new_y = (1.0 - alpha) * policy.surrogate_cost(X_test, new_z) + (
+            alpha * policy.wasserstein(X_test, new_z)
+        )
+        new_y_gt = dosage_cost(
+            col_transforms[dataset.dose].invert(
+                new_z.flatten().detach().cpu().numpy()
+            ),
+            np.tile(oracle(X_test), new_y.size(dim=-1))
+        )
+        new_y_gt = new_y_gt.reshape(*tuple(new_y.size()))
 
-            # Fit the source critic.
-            if i % 4 == 0:
-                policy.fit_critic(X_test)
+        # Update training points.
+        z = torch.cat((z, new_z), dim=-1)
+        y = torch.cat((y, new_y), dim=-1)
+        y_gt = np.concatenate((y_gt, new_y_gt), axis=-1)
+
+        # Fit the source critic.
+        if step % args.num_generator_per_critic == 0:
+            policy.fit_critic(X_test, z)
 
     # Save optimization results.
     if args.savepath is not None:
         with open(args.savepath, mode="wb") as f:
             results = {
-                "X": X_test,
-                "preds": preds,
-                "gt": gts,
+                "z": z.detach().cpu().numpy(),
+                "y": y.detach().cpu().numpy(),
+                "y_gt": y_gt,
                 "alpha": np.array(a),
-                "batch_size": args.batch_size,
+                "X": X_test,
+                "batch_size": args.batch_size
             }
             pickle.dump(results, f)
 
@@ -194,4 +205,7 @@ def main():
 if __name__ == "__main__":
     seed_everything()
     torch.set_default_dtype(torch.float64)
+    warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
+    warnings.filterwarnings("ignore", category=InputDataWarning)
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
     main()

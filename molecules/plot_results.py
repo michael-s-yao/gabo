@@ -35,7 +35,6 @@ def main(
     vae = InfoTransformerVAE()
     vae.load_state_dict(torch.load(vae_ckpt))
     vae.eval()
-    z_dim = vae.encoder_embedding_dim
 
     print(results_path)
     idxs = np.argsort(y)
@@ -64,9 +63,9 @@ def main(
 if __name__ == "__main__":
     torch.set_default_dtype(torch.float64)
     warnings.filterwarnings("ignore", category=UserWarning)
-    main("./alpha=0.0.pkl")
-    main("./alpha=0.2.pkl")
-    main("./alpha=0.5.pkl")
-    main("./alpha=0.8.pkl")
-    main("./alpha=1.0.pkl")
-    main("./alpha.pkl")
+    # main("./molecules/docs/alpha=0.0.pkl")
+    # main("./molecules/docs/alpha=0.2.pkl")
+    # main("./molecules/docs/alpha=0.5.pkl")
+    # main("./molecules/docs/alpha=0.8.pkl")
+    # main("./molecules/docs/alpha=1.0.pkl")
+    main("./molecules/docs/alpha.pkl")

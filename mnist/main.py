@@ -28,6 +28,7 @@ from experiment.utility import seed_everything
 
 def main(
     alpha: Optional[float] = None,
+    num_generator_per_critic: int = 4,
     budget: int = 512,
     batch_size: int = 16,
     z_bound: float = 5.0,
@@ -35,11 +36,14 @@ def main(
     vae_ckpt: Union[Path, str] = "./mnist/checkpoints/mnist_vae.pt",
     energy_ckpt: Union[Path, str] = "./mnist/checkpoints/mnist_surrogate.pt",
     device: torch.device = torch.device("cpu"),
-    savepath: Optional[Union[Path, str]] = None
+    savepath: Optional[Union[Path, str]] = None,
+    seed: int = 42
 ) -> None:
     """
     Input:
         alpha: optional constant value for alpha.
+        num_generator_per_critic: number of times to sample over the latent
+            space before retraining the source critic. Default 4.
         budget: sampling budget.
         batch_size: batch size.
         z_bound: L-infinity sampling bound in the VAE latent space. Default 10.
@@ -48,6 +52,7 @@ def main(
         energy_ckpt: path to the trained surrogate image energy estimator file.
         device: device. Default CPU.
         savepath: optional path to save the optimization results to.
+        seed: random seed. Default 42.
     Returns:
         None.
     """
@@ -113,10 +118,10 @@ def main(
         z_ref, _, _ = vae.encode(
             policy.reference_sample(8 * batch_size).flatten(start_dim=1)
         )
-        if step % 4 == 0:
+        if step % num_generator_per_critic == 0:
             policy.fit_critic(z.detach(), z_ref.detach())
 
-        # Calculate the surrogate and objective values.
+        # Calculate the surrogate and oracle objective values.
         alpha = policy.alpha(z_ref)
         a.append(alpha)
         new_y = (1.0 - alpha) * surrogate(new_z) - alpha * torch.unsqueeze(
@@ -154,10 +159,6 @@ def main(
 
 
 if __name__ == "__main__":
-    torch.set_default_dtype(torch.float64)
-    warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
-    seed_everything()
-
     device = torch.device("cpu")
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -169,6 +170,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--savepath", type=str, default=None, help="Path to save results to."
     )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed. Default 42."
+    )
     args = parser.parse_args()
 
-    main(alpha=args.alpha, device=device, savepath=args.savepath)
+    torch.set_default_dtype(torch.float64)
+    warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
+    seed_everything(args.seed)
+    main(
+        alpha=args.alpha,
+        device=device,
+        savepath=args.savepath,
+        seed=args.seed,
+        vae_ckpt=f"./mnist/checkpoints/mnist_vae_{args.seed}.pt",
+        energy_ckpt=f"./mnist/checkpoints/mnist_surrogate_{args.seed}.pt"
+    )
