@@ -241,9 +241,14 @@ class DosingPolicy:
         if self.constant is not None:
             return self.constant
         alphas = np.linspace(0.0, 1.0, num=201)
-        return alphas[np.argmax([self._score(a, dataset) for a in alphas])]
+        scores = torch.cat(
+            [self._score(a, dataset).unsqueeze(dim=-1) for a in alphas], dim=-1
+        )
+        return torch.from_numpy(alphas).to(self.device)[
+            torch.argmax(scores, dim=-1)
+        ]
 
-    def _score(self, alpha: float, X: pd.DataFrame) -> float:
+    def _score(self, alpha: float, X: pd.DataFrame) -> torch.Tensor:
         """
         Scores a particular value of alpha according to the Lagrange dual
         function g(alpha).
@@ -251,7 +256,7 @@ class DosingPolicy:
             alpha: the particular value of alpha to score.
             X: the dataset of patients for which to calculate the score for.
         Returns:
-            g(alpha | X).
+            g(alpha | X) for each datum in X.
         """
         P = torch.from_numpy(self.dataset.to_numpy().astype(np.float64)).to(
             self.device
@@ -259,7 +264,7 @@ class DosingPolicy:
         zstar = self._search(alpha, X).detach()
         Wd = torch.mean(self.critic(P)) - self.critic(zstar.unsqueeze(dim=0))
         score = ((1.0 - alpha) * self.surrogate(zstar)) + (alpha * Wd)
-        return score.item()
+        return score
 
     def _search(
         self, alpha: float, X: pd.DataFrame, budget: int = 4096
@@ -283,11 +288,9 @@ class DosingPolicy:
             z = z.reshape(-1, X.shape[-1]).astype(np.float64)
             z[:, dose_idx] = z_min + (self.rng.rand(budget) * (z_max - z_min))
             z = torch.from_numpy(z).to(self.device).requires_grad_(True)
-            self.surrogate(z).backward(torch.ones((budget, 1)).to(self.device))
-            Df = z.grad[:, dose_idx]
+            Df = torch.autograd.grad(self.surrogate(z).sum(), z)[0][:, dose_idx]
             z.requires_grad_(True)
-            self.critic(z).backward(torch.ones((budget, 1)).to(self.device))
-            Dc = z.grad[:, dose_idx]
+            Dc = torch.autograd.grad(self.critic(z).sum(), z)[0][:, dose_idx]
             DL = ((1.0 - alpha) * Df) - (alpha * Dc)
             zstar[i] = z[torch.argmin(torch.linalg.norm(DL, dim=-1))]
         return zstar

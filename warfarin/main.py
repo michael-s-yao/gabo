@@ -46,16 +46,10 @@ def build_args() -> argparse.Namespace:
         help="Relative source critic regularization weighting."
     )
     parser.add_argument(
-        "--surrogate_cost",
-        type=str,
-        default="./warfarin/docs/MLPRegressor_cost.pkl",
-        help="Path to surrogate cost function."
-    )
-    parser.add_argument(
         "--hparams",
         type=str,
         default="./warfarin/hparams.json",
-        help="Path to JSON file with surrogate cost hyperparameters."
+        help="Path to JSON file with source critic hyperparameters."
     )
     parser.add_argument(
         "--savepath",
@@ -108,7 +102,9 @@ def main():
     # Load the surrogate objective function.
     dataset = WarfarinDataset(seed=args.seed)
     oracle = WarfarinDose()
-    surrogate = FrozenMLPRegressor(args.surrogate_cost)
+    surrogate = FrozenMLPRegressor(
+        f"./warfarin/docs/MLPRegressor_cost_{args.seed}.pkl"
+    )
     with open(args.hparams, "rb") as f:
         hparams = json.load(f)
         critic_hparams = hparams["SourceCritic"]

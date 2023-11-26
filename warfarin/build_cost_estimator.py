@@ -6,7 +6,6 @@ Author(s):
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
-import argparse
 import json
 import matplotlib.pyplot as plt
 import numpy as np
@@ -15,12 +14,9 @@ import pickle
 from collections.abc import Iterable
 from itertools import product
 from pathlib import Path
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.linear_model import Lasso
 from sklearn.neural_network import MLPRegressor
 from sklearn.model_selection import cross_val_score
 from sklearn.preprocessing import StandardScaler
-from sklearn.tree import DecisionTreeRegressor
 from tqdm import tqdm
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
@@ -31,7 +27,7 @@ from dosing import WarfarinDose
 
 def hyperparams(
     model: Any, seed: int = 42
-) -> Tuple[Sequence[str], Iterable[Tuple[int]], int]:
+) -> Tuple[Sequence[str], Iterable]:
     """
     Returns an iterable over the hyperparameter search space.
     Input:
@@ -42,69 +38,29 @@ def hyperparams(
         hyperparam_search: an iterable over the hyperparameter search space.
         total_searches: the cardinality of the hyperparameter search space.
     """
-    if model == MLPRegressor:
-        hidden_layer_sizes = [(32,), (64,), (32,) * 8, (128,) * 2]
-        batch_size = [16, 32, 64]
-        max_iter = [500]
-        learning_rate_init = [0.001, 0.01, 0.1]
-        early_stopping = [True]
-        random_state = [seed]
-        hyperparam_names = [
-            "hidden_layer_sizes",
-            "batch_size",
-            "max_iter",
-            "learning_rate_init",
-            "early_stopping",
-            "random_state"
-        ]
-        hyperparams = [
-            hidden_layer_sizes,
-            batch_size,
-            max_iter,
-            learning_rate_init,
-            early_stopping,
-            random_state
-        ]
-        total_searches = np.prod([len(vals) for vals in hyperparams])
-        return hyperparam_names, iter(product(*hyperparams)), total_searches
-    if model == Lasso:
-        alpha = [1.0, 2.0, 5.0]
-        alpha = [
-            [factor * x]
-            for x in [1.0, 2.0, 5.0]
-            for factor in [0.001, 0.01, 0.1, 1, 10, 100]
-        ]
-        return ["alpha"], alpha, len(alpha)
-    max_depth = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, None]
-    min_samples_split = [2, 4, 8, 16, 32, 64, 128]
-    min_samples_leaf = [1, 2, 4, 8, 16]
-    max_leaf_nodes = [2, 4, 8, 16, 32, 64, 128, None]
-    hyperparams = [
-        max_depth, min_samples_split, min_samples_leaf, max_leaf_nodes
-    ]
+    hidden_layer_sizes = [(32,), (64,), (32,) * 8, (128,) * 2]
+    batch_size = [16, 32, 64]
+    max_iter = [500]
+    learning_rate_init = [0.001, 0.01, 0.1]
+    early_stopping = [True]
+    random_state = [seed]
     hyperparam_names = [
-        "max_depth", "min_samples_split", "min_samples_leaf", "max_leaf_nodes"
+        "hidden_layer_sizes",
+        "batch_size",
+        "max_iter",
+        "learning_rate_init",
+        "early_stopping",
+        "random_state"
     ]
-    if model == RandomForestRegressor:
-        n_estimators = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
-        hyperparam_names.append("n_estimators")
-        hyperparams.append(n_estimators)
-    elif model == GradientBoostingRegressor:
-        max_depth = [1, 2, 4, 8, 16, 32]
-        n_estimators = [128, 256, 512, 1024]
-        learning_rate = [0.001, 0.01, 0.1, 1]
-        hyperparams = [
-            max_depth,
-            min_samples_split,
-            min_samples_leaf,
-            max_leaf_nodes,
-            n_estimators,
-            learning_rate
-        ]
-        hyperparam_names += ["n_estimators", "learning_rate"]
-    elif model != DecisionTreeRegressor:
-        raise NotImplementedError(f"Unrecognized model type {model}")
-    total_searches = np.prod([len(param_vals) for param_vals in hyperparams])
+    hyperparams = [
+        hidden_layer_sizes,
+        batch_size,
+        max_iter,
+        learning_rate_init,
+        early_stopping,
+        random_state
+    ]
+    total_searches = np.prod([len(vals) for vals in hyperparams])
     return hyperparam_names, iter(product(*hyperparams)), total_searches
 
 
@@ -140,15 +96,13 @@ def search_hyperparams(
     scaler_cost = StandardScaler()
     cost_train = scaler_cost.fit_transform(cost_train_p.to_numpy()[:, None])
 
-    if model == Lasso or model == MLPRegressor:
-        scaler_h, scaler_w = StandardScaler(), StandardScaler()
-        scaler_d = StandardScaler()
-        for col, scaler in zip([h, w, d], [scaler_h, scaler_w, scaler_d]):
-            X_train[col] = scaler.fit_transform(
-                X_train[col].to_numpy()[:, None]
-            )
-    if model == GradientBoostingRegressor or model == MLPRegressor:
-        cost_train = np.squeeze(cost_train)
+    scaler_h, scaler_w = StandardScaler(), StandardScaler()
+    scaler_d = StandardScaler()
+    for col, scaler in zip([h, w, d], [scaler_h, scaler_w, scaler_d]):
+        X_train[col] = scaler.fit_transform(
+            X_train[col].to_numpy()[:, None]
+        )
+    cost_train = np.squeeze(cost_train)
 
     names, search, total = hyperparams(model)
     best_nmses, best_hyperparams = np.full(cv, -1e12), None
@@ -157,10 +111,6 @@ def search_hyperparams(
         search, desc="Hyperparameter Search", total=total, leave=False
     ):
         params = {name: val for name, val in zip(names, params)}
-        if model == Lasso:
-            params["max_iter"] = int(1e6)
-            if "max_iter" not in names:
-                names.append("max_iter")
         regressor = model(**params)
         nmses = cross_val_score(
             regressor,
@@ -207,8 +157,7 @@ def plot_error(
 
 
 def build_cost_func(
-    model: Any,
-    hparams: Union[Path, str] = "./hparams.json",
+    hparams: Union[Path, str] = "./warfarin/hparams.json",
     seed: int = 42,
     plotpath: Optional[Union[Path, str]] = None,
     savepath: Optional[Union[Path, str]] = None
@@ -216,7 +165,6 @@ def build_cost_func(
     """
     Trains and tests a specified model type as a warfarin cost estimator.
     Input:
-        model: the model to search the hyperparameters over.
         hparams: the file path to the JSON file with the model hyperparameters.
         seed: random seed. Default 42.
         plotpath: optional path to save the histogram plot to. Default None.
@@ -228,7 +176,7 @@ def build_cost_func(
     dose = WarfarinDose()
 
     with open(hparams, "rb") as f:
-        hparams = json.load(f)[str(model).split(".")[-1][:-2]]
+        hparams = json.load(f)["Surrogate"]
     p = hparams.pop("p")
 
     h, w, d = dataset.height, dataset.weight, dataset.dose
@@ -242,18 +190,16 @@ def build_cost_func(
     cost_train = scaler_cost.fit_transform(cost_train_p.to_numpy()[:, None])
     cost_test = dosage_cost(pred_dose_test, gt_dose_test)
 
-    if model == Lasso or model == MLPRegressor:
-        scaler_h, scaler_w = StandardScaler(), StandardScaler()
-        scaler_d = StandardScaler()
-        for col, scaler in zip([h, w, d], [scaler_h, scaler_w, scaler_d]):
-            X_train[col] = scaler.fit_transform(
-                X_train[col].to_numpy()[:, None]
-            )
-            X_test[col] = scaler.transform(X_test[col].to_numpy()[:, None])
-    if model == GradientBoostingRegressor or model == MLPRegressor:
-        cost_train = np.squeeze(cost_train)
+    scaler_h, scaler_w = StandardScaler(), StandardScaler()
+    scaler_d = StandardScaler()
+    for col, scaler in zip([h, w, d], [scaler_h, scaler_w, scaler_d]):
+        X_train[col] = scaler.fit_transform(
+            X_train[col].to_numpy()[:, None]
+        )
+        X_test[col] = scaler.transform(X_test[col].to_numpy()[:, None])
+    cost_train = np.squeeze(cost_train)
 
-    regressor = model(**hparams)
+    regressor = MLPRegressor(**hparams)
     regressor.fit(X_train, cost_train)
 
     pred_cost_test = np.power(
@@ -283,31 +229,10 @@ def build_cost_func(
     return np.sqrt(np.mean(np.square(pred_cost_test - cost_test)))
 
 
-def select_model() -> Any:
-    """
-    Selects a model architecture to train as the cost estimator.
-    Input:
-        None.
-    Returns:
-        Model to train.
-    """
-    models = {
-        "Lasso": Lasso,
-        "DecisionTreeRegressor": DecisionTreeRegressor,
-        "GradientBoostingRegressor": GradientBoostingRegressor,
-        "RandomForestRegressor": RandomForestRegressor,
-        "MLPRegressor": MLPRegressor
-    }
-    parser = argparse.ArgumentParser("Warfarin dosage cost estimator.")
-    parser.add_argument(
-        "--model",
-        type=str,
-        required=True,
-        choices=list(models.keys()),
-        help="Predictive cost model backbone."
-    )
-    return models[parser.parse_args().model]
-
-
 if __name__ == "__main__":
-    build_cost_func(select_model())
+    for seed in [42, 43, 44, 45, 46]:
+        build_cost_func(
+            seed=seed,
+            plotpath=f"./warfarin/docs/MLPRegressor_cost_{seed}.png",
+            savepath=f"./warfarin/docs/MLPRegressor_cost_{seed}.pkl"
+        )

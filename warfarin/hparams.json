@@ -1,11 +1,12 @@
 {
   "Surrogate": {
-    "hidden_layer_sizes": [128, 128],
-    "batch_size": 16,
-    "max_iter": 500,
-    "learning_rate_init": 0.001,
+    "hidden_layer_sizes": [128, 128, 128, 128],
+    "batch_size": 32,
+    "max_iter": 1000,
+    "learning_rate_init": 0.0001,
     "early_stopping": true,
     "random_state": 42,
+    "activation": "tanh",
     "p": 0.5
   },
   "SourceCritic": {
