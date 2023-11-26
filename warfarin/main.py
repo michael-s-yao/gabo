@@ -64,18 +64,6 @@ def build_args() -> argparse.Namespace:
         help="Path to save the optimization results to. Default not saved."
     )
     parser.add_argument(
-        "--min_z_dose",
-        type=float,
-        default=-10.0,
-        help="Minimum warfarin dose to search over in normalized units."
-    )
-    parser.add_argument(
-        "--max_z_dose",
-        type=float,
-        default=10.0,
-        help="Maximum warfarin dose to search over in normalized units."
-    )
-    parser.add_argument(
         "--thresh_max",
         type=float,
         default=315,
@@ -85,15 +73,18 @@ def build_args() -> argparse.Namespace:
         "--batch_size", type=int, default=8, help="Batch size. Default 8."
     )
     ngpc_help = "Number of times to sample doses before retraining the source "
-    ngpc_help += "critic. Default 4."
+    ngpc_help += "critic. Default 2."
     parser.add_argument(
-        "--num_generator_per_critic", type=int, default=4, help=ngpc_help
+        "--num_generator_per_critic", type=int, default=2, help=ngpc_help
     )
     parser.add_argument(
         "--budget",
         type=int,
-        default=64,
-        help="Total sampling budget per patient. Default 64."
+        default=256,
+        help="Total sampling budget per patient. Default 256."
+    )
+    parser.add_argument(
+        "--device", type=str, default="cpu", help="Device. Default CPU."
     )
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed. Default 42."
@@ -104,6 +95,15 @@ def build_args() -> argparse.Namespace:
 
 def main():
     args = build_args()
+    torch.set_default_dtype(torch.float64)
+    torch.set_default_device(args.device)
+    device = torch.device(args.device)
+    use_deterministic = "cuda" not in args.device
+    seed_everything(seed=args.seed, use_deterministic=use_deterministic)
+
+    warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
+    warnings.filterwarnings("ignore", category=InputDataWarning)
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
 
     # Load the surrogate objective function.
     dataset = WarfarinDataset(seed=args.seed)
@@ -123,16 +123,16 @@ def main():
         X_test = t_col(X_test)
         col_transforms[col] = t_col
     z_range = col_transforms[dataset.dose](np.array([0, args.thresh_max]))
-    min_z_dose = max(np.min(z_range), args.min_z_dose)
-    max_z_dose = min(np.max(z_range), args.max_z_dose)
 
     policy = DosingPolicy(
         ref_dataset=X_train.astype(np.float64),
+        alpha=args.alpha,
         surrogate=surrogate,
-        min_z_dose=min_z_dose,
-        max_z_dose=max_z_dose,
+        min_z_dose=np.min(z_range),
+        max_z_dose=np.max(z_range),
         seed=args.seed,
         batch_size=args.batch_size,
+        device=device,
         **critic_hparams
     )
 
@@ -145,7 +145,7 @@ def main():
         )
     )
     policy.fit_critic(X_test, z)
-    alpha = policy.alpha()
+    alpha = policy.alpha(X_test)
     a.append(alpha)
     y = (1.0 - alpha) * policy.surrogate_cost(X_test, z) + (
         alpha * policy.wasserstein(X_test, z)
@@ -166,7 +166,7 @@ def main():
         new_z = policy(X_test, y, step)
 
         # Calculate the surrogate and oracle objective values.
-        alpha = policy.alpha()
+        alpha = policy.alpha(X_test)
         a.append(alpha)
         new_y = (1.0 - alpha) * policy.surrogate_cost(X_test, new_z) + (
             alpha * policy.wasserstein(X_test, new_z)
@@ -203,9 +203,4 @@ def main():
 
 
 if __name__ == "__main__":
-    seed_everything()
-    torch.set_default_dtype(torch.float64)
-    warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
-    warnings.filterwarnings("ignore", category=InputDataWarning)
-    warnings.filterwarnings("ignore", category=RuntimeWarning)
     main()

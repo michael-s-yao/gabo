@@ -64,11 +64,11 @@ class DosingPolicy:
             verbose: whether to print verbose outputs to `stdout`.
         """
         self.dataset = ref_dataset
-        self.surrogate = surrogate
         self.min_z_dose, self.max_z_dose = min_z_dose, max_z_dose
         self.constant = alpha
         self.seed = seed
         self.device = device
+        self.surrogate = surrogate.to(self.device)
         self.batch_size = batch_size
         self.num_restarts = num_restarts
         self.raw_samples = raw_samples
@@ -225,64 +225,72 @@ class DosingPolicy:
         X = pd.concat([X] * z.size(dim=-1))
         X[self.dose_key] = z.flatten().detach().cpu().numpy()
         cost = self.surrogate(
-            torch.from_numpy(X.to_numpy().astype(np.float64))
+            torch.from_numpy(X.to_numpy().astype(np.float64)).to(self.device)
         )
         return cost.reshape(*z.size())
 
-    def alpha(self) -> float:
+    def alpha(self, dataset: pd.DataFrame) -> float:
         """
         Returns the optimal value of alpha according to the dual optimization
         problem.
         Input:
-            None.
+            dataset: the dataset of patients for which to calculate alpha for.
         Returns:
             The optimal value of alpha as a float.
         """
         if self.constant is not None:
             return self.constant
         alphas = np.linspace(0.0, 1.0, num=201)
-        return alphas[
-            np.argmax([self._score(a) for a in alphas])
-        ]
+        return alphas[np.argmax([self._score(a, dataset) for a in alphas])]
 
-    def _score(self, alpha: float) -> float:
+    def _score(self, alpha: float, X: pd.DataFrame) -> float:
         """
         Scores a particular value of alpha according to the Lagrange dual
         function g(alpha).
         Input:
             alpha: the particular value of alpha to score.
+            X: the dataset of patients for which to calculate the score for.
         Returns:
-            g(alpha).
+            g(alpha | X).
         """
-        P = torch.from_numpy(self.dataset.to_numpy().astype(np.float64))
-        zstar = self._search(alpha).detach()
+        P = torch.from_numpy(self.dataset.to_numpy().astype(np.float64)).to(
+            self.device
+        )
+        zstar = self._search(alpha, X).detach()
         Wd = torch.mean(self.critic(P)) - self.critic(zstar.unsqueeze(dim=0))
         score = ((1.0 - alpha) * self.surrogate(zstar)) + (alpha * Wd)
         return score.item()
 
-    def _search(self, alpha: float, budget: int = 4096) -> np.ndarray:
+    def _search(
+        self, alpha: float, X: pd.DataFrame, budget: int = 4096
+    ) -> torch.Tensor:
         """
         Approximates z* for the Lagrange dual function by searching over
         the standard normal distribution.
         Input:
             alpha: value of alpha to find z* for.
+            X: the dataset of patients for which to find z* for.
             budget: number of samples to sample from the normal distribution.
         Returns:
-            The optimal z* from the sampled latent space points.
+            The optimal z* from the sampled latent space points for each datum.
         """
-        z = self.rng.rand(budget, self.dataset.shape[-1])
-        dose = list(self.dataset.columns).index(self.dose_key)
-        z[:, dose] = self.min_z_dose + (
-            self.rng.randn(budget) * (self.max_z_dose - self.min_z_dose)
-        )
-        z = torch.from_numpy(z).requires_grad_(True)
-        self.surrogate(z).backward(torch.ones((budget, 1)))
-        Df = z.grad[dose]
-        z.requires_grad_(True)
-        self.critic(z).backward(torch.ones((budget, 1)))
-        Dc = z.grad[dose]
-        L = ((1.0 - alpha) * Df) - (alpha * Dc)
-        return z[torch.argmin(torch.linalg.norm(L, dim=-1))]
+        dose_idx = list(self.dataset.columns).index(self.dose_key)
+        zstar = torch.empty(tuple(X.shape), device=self.device)
+        z_min = self.min_z_dose - (5.0 * (self.max_z_dose - self.min_z_dose))
+        z_max = self.max_z_dose + (5.0 * (self.max_z_dose - self.min_z_dose))
+        for i in range(len(X)):
+            z = pd.concat([X.iloc[i]] * budget, ignore_index=True).to_numpy()
+            z = z.reshape(-1, X.shape[-1]).astype(np.float64)
+            z[:, dose_idx] = z_min + (self.rng.rand(budget) * (z_max - z_min))
+            z = torch.from_numpy(z).to(self.device).requires_grad_(True)
+            self.surrogate(z).backward(torch.ones((budget, 1)).to(self.device))
+            Df = z.grad[:, dose_idx]
+            z.requires_grad_(True)
+            self.critic(z).backward(torch.ones((budget, 1)).to(self.device))
+            Dc = z.grad[:, dose_idx]
+            DL = ((1.0 - alpha) * Df) - (alpha * Dc)
+            zstar[i] = z[torch.argmin(torch.linalg.norm(DL, dim=-1))]
+        return zstar
 
 
 def generator() -> None:
