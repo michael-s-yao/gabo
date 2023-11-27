@@ -229,70 +229,79 @@ class DosingPolicy:
         )
         return cost.reshape(*z.size())
 
-    def alpha(self, dataset: pd.DataFrame) -> float:
+    def alpha(self, dataset: pd.DataFrame) -> torch.Tensor:
         """
         Returns the optimal value of alpha according to the dual optimization
         problem.
         Input:
             dataset: the dataset of patients for which to calculate alpha for.
         Returns:
-            The optimal value of alpha as a float.
+            The optimal values of alpha for each patient in the dataset.
         """
         if self.constant is not None:
             return self.constant
-        alphas = np.linspace(0.0, 1.0, num=201)
-        scores = torch.cat(
-            [self._score(a, dataset).unsqueeze(dim=-1) for a in alphas], dim=-1
-        )
-        return torch.from_numpy(alphas).to(self.device)[
-            torch.argmax(scores, dim=-1)
-        ]
+        alphas = torch.from_numpy(np.linspace(0.0, 1.0, num=201))
+        alphas = alphas.to(self.device)
+        scores = self._score(alphas, dataset)
+        return alphas[torch.argmax(scores, dim=-1)]
 
-    def _score(self, alpha: float, X: pd.DataFrame) -> torch.Tensor:
+    def _score(self, alpha: torch.Tensor, X: pd.DataFrame) -> torch.Tensor:
         """
         Scores a particular value of alpha according to the Lagrange dual
         function g(alpha).
         Input:
-            alpha: the particular value of alpha to score.
+            alpha: the particular values of alpha to score.
             X: the dataset of patients for which to calculate the score for.
         Returns:
-            g(alpha | X) for each datum in X.
+            g(alpha | X) for each datum in X. The returned tensor has shape
+            NA, where N is the number of patients in X and A is the number of
+            values of alpha tested.
         """
         P = torch.from_numpy(self.dataset.to_numpy().astype(np.float64)).to(
             self.device
         )
         zstar = self._search(alpha, X).detach()
-        Wd = torch.mean(self.critic(P)) - self.critic(zstar.unsqueeze(dim=0))
-        score = ((1.0 - alpha) * self.surrogate(zstar)) + (alpha * Wd)
-        return score
+        Wd = (torch.mean(self.critic(P)) - self.critic(zstar)).squeeze(dim=-1)
+        return ((1.0 - alpha) * self.surrogate(zstar).squeeze(dim=-1)) + (
+            alpha * Wd
+        )
 
     def _search(
-        self, alpha: float, X: pd.DataFrame, budget: int = 4096
+        self, alpha: torch.Tensor, X: pd.DataFrame, budget: int = 4096
     ) -> torch.Tensor:
         """
         Approximates z* for the Lagrange dual function by searching over
         the standard normal distribution.
         Input:
-            alpha: value of alpha to find z* for.
+            alpha: values of alpha to find z* for.
             X: the dataset of patients for which to find z* for.
             budget: number of samples to sample from the normal distribution.
         Returns:
             The optimal z* from the sampled latent space points for each datum.
+            The returned tensor has shape NAD, where N is the number of
+            patients in X, A is the number of values of alpha tested, and D is
+            the dimensions of the patient features.
         """
         dose_idx = list(self.dataset.columns).index(self.dose_key)
-        zstar = torch.empty(tuple(X.shape), device=self.device)
+        zstar = torch.empty(
+            (X.shape[0], alpha.size(dim=0), X.shape[-1]), device=self.device
+        )
         z_min = self.min_z_dose - (5.0 * (self.max_z_dose - self.min_z_dose))
         z_max = self.max_z_dose + (5.0 * (self.max_z_dose - self.min_z_dose))
+        alpha = torch.from_numpy(np.linspace(0, 1, 201)).to(self.device)
+        alpha = alpha.repeat(budget, 1).T
         for i in range(len(X)):
             z = pd.concat([X.iloc[i]] * budget, ignore_index=True).to_numpy()
             z = z.reshape(-1, X.shape[-1]).astype(np.float64)
             z[:, dose_idx] = z_min + (self.rng.rand(budget) * (z_max - z_min))
             z = torch.from_numpy(z).to(self.device).requires_grad_(True)
-            Df = torch.autograd.grad(self.surrogate(z).sum(), z)[0][:, dose_idx]
+            Df = torch.autograd.grad(self.surrogate(z).sum(), z)[0][
+                :, dose_idx
+            ]
             z.requires_grad_(True)
             Dc = torch.autograd.grad(self.critic(z).sum(), z)[0][:, dose_idx]
             DL = ((1.0 - alpha) * Df) - (alpha * Dc)
-            zstar[i] = z[torch.argmin(torch.linalg.norm(DL, dim=-1))]
+            zstar[i] = z[torch.argmin(torch.abs(DL), dim=-1)]
         return zstar
 
 

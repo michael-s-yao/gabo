@@ -140,7 +140,7 @@ def main():
             [[policy.min_z_dose], [policy.max_z_dose]], device=policy.device
         )
     )
-    policy.fit_critic(X_test, z)
+    # policy.fit_critic(X_test, z)
     alpha = policy.alpha(X_test)
     a.append(alpha)
     y = (1.0 - alpha) * policy.surrogate_cost(X_test, z) + (
