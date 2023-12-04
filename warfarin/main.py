@@ -67,9 +67,9 @@ def build_args() -> argparse.Namespace:
         "--batch_size", type=int, default=8, help="Batch size. Default 8."
     )
     ngpc_help = "Number of times to sample doses before retraining the source "
-    ngpc_help += "critic. Default 2."
+    ngpc_help += "critic. Default 4."
     parser.add_argument(
-        "--num_generator_per_critic", type=int, default=2, help=ngpc_help
+        "--num_generator_per_critic", type=int, default=4, help=ngpc_help
     )
     parser.add_argument(
         "--budget",
@@ -140,9 +140,11 @@ def main():
             [[policy.min_z_dose], [policy.max_z_dose]], device=policy.device
         )
     )
-    # policy.fit_critic(X_test, z)
+    policy.fit_critic(X_test, z)
     alpha = policy.alpha(X_test)
-    a.append(alpha)
+    if isinstance(alpha, torch.Tensor):
+        a.append(alpha.detach().cpu().numpy())
+        alpha = alpha.repeat(args.batch_size, 1).T
     y = (1.0 - alpha) * policy.surrogate_cost(X_test, z) + (
         alpha * policy.wasserstein(X_test, z)
     )
@@ -163,7 +165,9 @@ def main():
 
         # Calculate the surrogate and oracle objective values.
         alpha = policy.alpha(X_test)
-        a.append(alpha)
+        if isinstance(alpha, torch.Tensor):
+            a.append(alpha.detach().cpu().numpy())
+            alpha = alpha.repeat(args.batch_size, 1).T
         new_y = (1.0 - alpha) * policy.surrogate_cost(X_test, new_z) + (
             alpha * policy.wasserstein(X_test, new_z)
         )
@@ -182,7 +186,7 @@ def main():
 
         # Fit the source critic.
         if step % args.num_generator_per_critic == 0:
-            policy.fit_critic(X_test, z)
+            policy.fit_critic(X_test, new_z)
 
     # Save optimization results.
     if args.savepath is not None:
@@ -191,7 +195,7 @@ def main():
                 "z": z.detach().cpu().numpy(),
                 "y": y.detach().cpu().numpy(),
                 "y_gt": y_gt,
-                "alpha": np.array(a),
+                "alpha": a,
                 "X": X_test,
                 "batch_size": args.batch_size
             }

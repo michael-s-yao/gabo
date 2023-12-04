@@ -121,4 +121,5 @@ warfarin/data/*.xls
 molecules/data/
 molecules/state_dict/
 molecules/checkpoints/
+molecules/cache.pkl
 mnist/checkpoints/

@@ -31,6 +31,7 @@ from experiment.utility import seed_everything
 
 def main(
     alpha: Optional[float] = None,
+    num_generator_per_critic: int = 4,
     budget: int = 256,
     batch_size: int = 16,
     z_bound: float = 8.0,
@@ -42,6 +43,8 @@ def main(
     """
     Input:
         alpha: optional constant value for alpha.
+        num_generator_per_critic: number of times to sample over the latent
+            space before retraining the source critic. Default 4.
         budget: sampling budget.
         batch_size: batch size.
         z_bound: L-infinity sampling bound in the VAE latent space. Default 10.
@@ -97,7 +100,7 @@ def main(
     )
 
     # Choose the initial set of observations.
-    a = []
+    history = []
     z = unnormalize(
         torch.rand(batch_size, z_dim, device=device), bounds=bounds
     )
@@ -106,7 +109,10 @@ def main(
 
     policy.fit_critic(z.detach(), z_ref.detach())
     alpha = policy.alpha(z_ref)
-    a.append(alpha)
+    if isinstance(alpha, torch.Tensor):
+        history.append(alpha.item())
+    else:
+        history.append(alpha)
     y = (1.0 - alpha) * torch.squeeze(surrogate(z), dim=-1) - alpha * (
         policy.wasserstein(z_ref.detach(), z.detach())
     )
@@ -135,12 +141,15 @@ def main(
         # Train the source critic.
         z_ref = vae(policy.reference_sample(8 * batch_size))["z"]
         z_ref = z_ref.flatten(start_dim=(z_ref.ndim - 2))
-        if step % 4 == 0:
+        if step % num_generator_per_critic == 0:
             policy.fit_critic(z.detach(), z_ref.detach())
 
         # Calculate the surrogate and objective values.
         alpha = policy.alpha(z_ref)
-        a.append(alpha)
+        if isinstance(alpha, torch.Tensor):
+            history.append(alpha.item())
+        else:
+            history.append(alpha)
         new_y = (1.0 - alpha) * torch.squeeze(surrogate(new_z), dim=-1) - (
             alpha * policy.wasserstein(z_ref.detach(), new_z.detach())
         )
@@ -176,7 +185,7 @@ def main(
                 "z": z.detach().cpu().numpy(),
                 "y": y.detach().cpu().numpy(),
                 "y_gt": y_gt.detach().cpu().numpy(),
-                "alpha": np.array(a),
+                "alpha": np.array(history),
                 "batch_size": batch_size,
                 "budget": budget
             }
@@ -186,14 +195,8 @@ def main(
 
 
 if __name__ == "__main__":
-    torch.set_default_dtype(torch.float64)
     warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
     warnings.filterwarnings("ignore", category=UserWarning)
-    seed_everything(use_deterministic=False)
-
-    device = torch.device("cpu")
-    if torch.cuda.is_available():
-        device = torch.device("cuda:0")
 
     parser = argparse.ArgumentParser(description="Molecule GABO Experiments")
     parser.add_argument(
@@ -202,6 +205,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--savepath", type=str, default=None, help="Path to save results to."
     )
+    parser.add_argument(
+        "--device", type=str, default="cpu", help="Device. Default CPU."
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed. Default 42."
+    )
     args = parser.parse_args()
 
-    main(alpha=args.alpha, device=device, savepath=args.savepath)
+    seed_everything(
+        args.seed, use_deterministic=("cuda" not in args.device.lower())
+    )
+    torch.set_default_dtype(torch.float64)
+    torch.set_default_device(args.device)
+    main(
+        alpha=args.alpha,
+        device=torch.device(args.device),
+        savepath=args.savepath
+    )

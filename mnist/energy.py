@@ -28,8 +28,8 @@ from experiment.utility import seed_everything, get_device, plot_config
 class Surrogate(nn.Module):
     def __init__(
         self,
-        in_dim: int = 64,
-        hidden_dims: Sequence[int] = [256, 64]
+        in_dim: int = 16,
+        hidden_dims: Sequence[int] = [256, 256]
     ):
         """
         Args:
@@ -43,7 +43,7 @@ class Surrogate(nn.Module):
         for i in range(len(self.hidden_dims) - 1):
             self.model += [
                 nn.Linear(self.hidden_dims[i], self.hidden_dims[i + 1]),
-                nn.ReLU() if i < len(self.hidden_dims) - 2 else nn.Sigmoid()
+                nn.ReLU() if i < len(self.hidden_dims) - 2 else nn.Identity()
             ]
         self.model = nn.Sequential(*self.model)
 
@@ -61,7 +61,7 @@ class Surrogate(nn.Module):
 def fit(
     root: Union[Path, str] = "./mnist/data",
     vae: Union[Path, str] = "./mnist/checkpoints/mnist_vae.pt",
-    batch_size: int = 128,
+    batch_size: int = 64,
     lr: float = 1e-3,
     num_epochs: int = 50,
     device: torch.device = torch.device("cpu"),
@@ -89,7 +89,8 @@ def fit(
         ),
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0
+        num_workers=0,
+        generator=torch.Generator(device=device)
     )
 
     autoencoder = VAE().to(device)
@@ -172,15 +173,26 @@ if __name__ == "__main__":
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed. Default 42."
     )
-    seed = parser.parse_args().seed
+    parser.add_argument(
+        "--device", type=str, default="cpu", help="Device. Default CPU."
+    )
+    args = parser.parse_args()
 
     torch.set_default_dtype(torch.float64)
-    seed_everything(seed)
-    device = get_device("cpu")
-    model_path = f"./mnist/checkpoints/mnist_surrogate_{seed}.pt"
-    fit(savepath=model_path, device=device)
-    # test(
-    #     checkpoint=model_path,
-    #     device=device,
-    #     savepath="./mnist/docs/surrogate.png"
-    # )
+    torch.set_default_device(args.device)
+    seed_everything(
+        args.seed, use_deterministic=("cuda" not in args.device.lower())
+    )
+    device = get_device(args.device)
+    model_path = f"./mnist/checkpoints/mnist_surrogate_{args.seed}.pt"
+    fit(
+        savepath=model_path,
+        vae=f"./mnist/checkpoints/mnist_vae_{args.seed}.pt",
+        device=device
+    )
+    test(
+        checkpoint=model_path,
+        vae=f"./mnist/checkpoints/mnist_vae_{args.seed}.pt",
+        device=device,
+        savepath=f"./mnist/docs/surrogate_{args.seed}.png"
+    )

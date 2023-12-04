@@ -84,8 +84,8 @@ class GABOPolicy:
         )
         self.critic = self.critic.to(self.device)
         self.critic.eval()
-        self.clipper = WeightClipper(c=0.05)
-        self.optimizer = optim.SGD(self.critic.parameters(), lr=0.002)
+        self.clipper = WeightClipper(c=0.1)
+        self.optimizer = optim.SGD(self.critic.parameters(), lr=0.01)
 
     def __call__(
         self, model: SingleTaskGP, batch_size: int, y: torch.Tensor
@@ -129,7 +129,9 @@ class GABOPolicy:
             torch.from_numpy(self.rng.rand(n, 2)).to(self.device),
             bounds=self.bounds
         )
-        return X.detach(), self.surrogate(X).detach().to(self.device)
+        return X.detach().to(self.device), self.surrogate(X).detach().to(
+            self.device
+        )
 
     def fit(self, X: torch.Tensor, y: torch.Tensor) -> SingleTaskGP:
         """
@@ -213,44 +215,56 @@ class GABOPolicy:
         """
         if self.constant is not None:
             return self.constant
-        alphas = np.linspace(0.0, 1.0, num=201)
-        return alphas[np.argmax([self._score(a, X_ref) for a in alphas])]
+        alpha = torch.from_numpy(np.linspace(0.0, 1.0, num=201))
+        alpha = alpha.to(self.device)
+        return alpha[torch.argmax(self._score(alpha, X_ref))].item()
 
-    def _score(self, alpha: float, X_ref: torch.Tensor) -> float:
+    def _score(self, alpha: torch.Tensor, X_ref: torch.Tensor) -> torch.Tensor:
         """
-        Scores a particular value of alpha according to the Lagrange dual
-        function g(alpha).
+        Scores alpha values according to the Lagrange dual function g(alpha).
         Input:
-            alpha: the particular value of alpha to score.
-            X_ref: a tensor of reference samples from nature.
+            alpha: the particular values of alpha to score.
+            z_ref: a tensor of reference true samples.
         Returns:
-            g(alpha).
+            g(alpha) as a tensor with the same shape as the alpha input.
         """
-        Xstar = self._search(alpha).detach()
-        score = ((alpha - 1.0) * self.surrogate(Xstar)) + (
-            alpha * self.wasserstein(X_ref, torch.unsqueeze(Xstar, dim=0))
+        X_star = self._search(alpha).detach()
+        return torch.where(
+            torch.linalg.norm(X_star, dim=-1) > 0.0,
+            ((alpha - 1.0) * self.surrogate(X_star).squeeze(dim=-1)) + (
+                alpha * self.wasserstein(X_ref, X_star)
+            ),
+            -1e12
         )
-        return score.item()
 
-    def _search(self, alpha: float, budget: int = 4096) -> torch.Tensor:
+    def _search(
+        self, alpha: torch.Tensor, budget: int = 4096, thresh: int = 0.1
+    ) -> torch.Tensor:
         """
         Approximates z* for the Lagrange dual function by searching over
         the standard normal distribution.
         Input:
-            alpha: value of alpha to find z* for.
+            alpha: the values of alpha to find z* for.
             budget: number of samples to sample from the normal distribution.
+            thresh: threshold value the norm of the Lagrangian gradient.
         Returns:
-            The optimal z* from the sampled latent space points.
+            The optimal z* from the sampled input points. The returned
+            tensor has shape A2, where A is the number of values of alpha
+            tested and D=2 is the dimensions of the input points.
         """
-        X = torch.randn((budget, 2))
+        alpha = alpha.repeat(budget, 2, 1).permute(2, 0, 1)
+        X = torch.randn((budget, 2)).to(self.device)
         X = unnormalize(X.detach(), bounds=self.bounds).requires_grad_(True)
-        self.surrogate(X).backward(torch.ones((budget, 1)))
-        Df = X.grad
-        X.requires_grad_(True)
-        self.critic(X).backward(torch.ones((budget, 1)))
-        Dc = X.grad
-        L = ((alpha - 1.0) * Df) - (alpha * Dc)
-        return X[torch.argmin(torch.linalg.norm(L, dim=-1))]
+        Df = torch.autograd.grad(self.surrogate(X).sum(), X)[0]
+        Dc = torch.autograd.grad(self.critic(X).sum(), X)[0]
+        DL = ((alpha - 1.0) * Df) - (alpha * Dc)
+        norm_DL, best_idxs = torch.min(torch.linalg.norm(DL, dim=-1), dim=-1)
+        X = X[best_idxs]
+        best_idxs = torch.where(norm_DL < thresh, best_idxs, -1)
+        with torch.no_grad():
+            for bad_idx in torch.where(best_idxs < 0)[0]:
+                X[bad_idx] = torch.zeros_like(X[bad_idx])
+        return X
 
 
 def generator() -> None:

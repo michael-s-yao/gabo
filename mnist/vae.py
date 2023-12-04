@@ -31,7 +31,7 @@ class VAE(nn.Module):
     def __init__(
         self,
         in_dim: int = 784,
-        hidden_dims: Sequence[int] = [256, 64]
+        hidden_dims: Sequence[int] = [256, 64, 16]
     ):
         """
         Args:
@@ -174,7 +174,8 @@ def fit(
         ),
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0
+        num_workers=0,
+        generator=torch.Generator(device=device)
     )
 
     model = VAE().to(device)
@@ -246,6 +247,7 @@ def test(
         fig.tight_layout()
         axs = axs.flatten()
         X, _ = next(iter(test))
+        X = X.to(device)
         recon = model(X)[0].reshape(X.size())
         for i, img in enumerate(X[:num_plot]):
             axs[(2 * i)].imshow(img[0].detach().cpu().numpy(), cmap="gray")
@@ -269,9 +271,8 @@ def test(
         )
         fig.tight_layout()
         axs = axs.flatten()
-        X = model.decode(torch.randn((16, model.hidden_dims[-1]))).reshape(
-            -1, *tuple(next(iter(test))[0].size())[1:]
-        )
+        X = model.decode(torch.randn((16, model.hidden_dims[-1])).to(device))
+        X = X.reshape(-1, *tuple(next(iter(test))[0].size())[1:])
         for i, img in enumerate(X.detach().cpu().numpy()):
             axs[i].imshow(img[0], cmap="gray")
             axs[i].axis("off")
@@ -289,12 +290,26 @@ if __name__ == "__main__":
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed. Default 42."
     )
-    seed = parser.parse_args().seed
+    parser.add_argument(
+        "--device", type=str, default="cpu", help="Device. Default CPU."
+    )
+    args = parser.parse_args()
 
     torch.set_default_dtype(torch.float64)
-    seed_everything(seed)
-    device = get_device("cpu")
-    model_path = f"./mnist/checkpoints/mnist_vae_{seed}.pt"
+    torch.set_default_device(args.device)
+    seed_everything(
+        args.seed, use_deterministic=("cuda" not in args.device.lower())
+    )
+    device = get_device(args.device)
+    model_path = f"./mnist/checkpoints/mnist_vae_{args.seed}.pt"
     fit(savepath=model_path, device=device)
-    # test(model_path, mode="recon", savepath="./mnist/docs/vae_recon.png")
-    # test(model_path, mode="sample", savepath="./mnist/docs/vae_sample.png")
+    test(
+        model_path,
+        mode="recon",
+        savepath=f"./mnist/docs/vae_recon_{args.seed}.png"
+    )
+    test(
+        model_path,
+        mode="sample",
+        savepath=f"./mnist/docs/vae_sample_{args.seed}.png"
+    )

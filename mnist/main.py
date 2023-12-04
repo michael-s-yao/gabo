@@ -12,9 +12,11 @@ import numpy as np
 import pickle
 import sys
 import torch
+import torch.nn.functional as F
 import warnings
 import torchvision as thv
 from pathlib import Path
+from torch.quasirandom import SobolEngine
 from typing import Optional, Union
 from botorch.exceptions.warnings import BadInitialCandidatesWarning
 from botorch.utils.transforms import unnormalize
@@ -29,9 +31,9 @@ from experiment.utility import seed_everything
 def main(
     alpha: Optional[float] = None,
     num_generator_per_critic: int = 4,
-    budget: int = 512,
-    batch_size: int = 16,
-    z_bound: float = 5.0,
+    budget: int = 256,
+    batch_size: int = 8,
+    z_bound: float = 4.0,
     root: Union[Path, str] = "./mnist/data",
     vae_ckpt: Union[Path, str] = "./mnist/checkpoints/mnist_vae.pt",
     energy_ckpt: Union[Path, str] = "./mnist/checkpoints/mnist_surrogate.pt",
@@ -90,18 +92,18 @@ def main(
     )
 
     # Choose the initial set of observations.
-    a = []
-    z = unnormalize(
-        torch.rand(batch_size, z_dim, device=device), bounds=bounds
-    )
+    a, Wds = [], []
+    sobol = SobolEngine(dimension=z_dim, scramble=True, seed=seed)
+    z = unnormalize(sobol.draw(n=batch_size).to(device), bounds=bounds)
     z_ref, _, _ = vae.encode(
         policy.reference_sample(8 * batch_size).flatten(start_dim=1)
     )
     policy.fit_critic(z.detach(), z_ref.detach())
     alpha = policy.alpha(z_ref)
     a.append(alpha)
-    y = (1.0 - alpha) * surrogate(z) - alpha * torch.unsqueeze(
-        policy.wasserstein(z_ref.detach(), z.detach()), dim=-1
+    Wds.append(torch.mean(policy.wasserstein(z_ref, z)).item())
+    y = (1.0 - alpha) * surrogate(z) - alpha * F.relu(
+        policy.wasserstein(z_ref.detach(), z.detach()).unsqueeze(dim=-1)
     )
     y_gt = torch.unsqueeze(
         torch.mean(torch.square(vae.decode(z)), dim=-1), dim=-1
@@ -113,19 +115,16 @@ def main(
 
         # Optimize and get new observations.
         new_z = policy(y)
-
-        # Train the source critic.
         z_ref, _, _ = vae.encode(
             policy.reference_sample(8 * batch_size).flatten(start_dim=1)
         )
-        if step % num_generator_per_critic == 0:
-            policy.fit_critic(z.detach(), z_ref.detach())
 
         # Calculate the surrogate and oracle objective values.
         alpha = policy.alpha(z_ref)
         a.append(alpha)
-        new_y = (1.0 - alpha) * surrogate(new_z) - alpha * torch.unsqueeze(
-            policy.wasserstein(z_ref.detach(), new_z.detach()), dim=-1
+        Wds.append(torch.mean(policy.wasserstein(z_ref, new_z)).item())
+        new_y = (1.0 - alpha) * surrogate(new_z) - alpha * F.relu(
+            policy.wasserstein(z_ref.detach(), new_z.detach()).unsqueeze(dim=-1)
         )
         new_gt = torch.unsqueeze(
             torch.mean(torch.square(vae.decode(new_z)), dim=-1), dim=-1
@@ -139,6 +138,10 @@ def main(
         # Update progress.
         policy.save_current_state_dict()
 
+        # Train the source critic.
+        if step % num_generator_per_critic == 0:
+            policy.fit_critic(new_z.detach(), z_ref.detach())
+
     # Save optimization results.
     if savepath is not None:
         X = vae.decode(z)
@@ -149,7 +152,10 @@ def main(
                 "z": z.detach().cpu().numpy(),
                 "y": y.detach().cpu().numpy(),
                 "y_gt": y_gt.detach().cpu().numpy(),
-                "alpha": np.array(a),
+                "alpha": np.array([
+                    x.item() if isinstance(x, torch.Tensor) else x for x in a
+                ]),
+                "Wd": np.array(Wds),
                 "batch_size": batch_size,
                 "budget": budget
             }
@@ -159,10 +165,6 @@ def main(
 
 
 if __name__ == "__main__":
-    device = torch.device("cpu")
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-
     parser = argparse.ArgumentParser(description="MNIST GABO Experiments")
     parser.add_argument(
         "--alpha", type=float, default=None, help="Optional constant alpha."
@@ -173,14 +175,20 @@ if __name__ == "__main__":
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed. Default 42."
     )
+    parser.add_argument(
+        "--device", type=str, default="cpu", help="Device. Default CPU."
+    )
     args = parser.parse_args()
 
     torch.set_default_dtype(torch.float64)
+    torch.set_default_device(args.device)
     warnings.filterwarnings("ignore", category=BadInitialCandidatesWarning)
-    seed_everything(args.seed)
+    seed_everything(
+        args.seed, use_deterministic=("cuda" not in args.device.lower())
+    )
     main(
         alpha=args.alpha,
-        device=device,
+        device=args.device,
         savepath=args.savepath,
         seed=args.seed,
         vae_ckpt=f"./mnist/checkpoints/mnist_vae_{args.seed}.pt",

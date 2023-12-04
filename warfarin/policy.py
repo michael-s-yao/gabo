@@ -76,6 +76,9 @@ class DosingPolicy:
         self.verbose = verbose
         self.rng = np.random.RandomState(seed=self.seed)
         self.dose_key = "Therapeutic Dose of Warfarin"
+        self.age_key = "Age"
+        self.height_key = "Height (cm)"
+        self.weight_key = "Weight (kg)"
         self.bounds = torch.tensor(
             [[self.min_z_dose], [self.max_z_dose]], device=self.device
         )
@@ -146,14 +149,16 @@ class DosingPolicy:
                 model.load_state_dict(state_dict)
                 for model, state_dict in zip(self.bo_models, self.state_dicts)
             ]
-        [
+        for model in tqdm(
+            self.bo_models,
+            desc="Fitting BO Models",
+            disable=(not self.verbose)
+        ):
             fit_gpytorch_mll(
                 ExactMarginalLogLikelihood(
                     likelihood=model.likelihood, model=model
                 ).to(self.device)
             )
-            for model in self.bo_models
-        ]
         self.state_dicts = [model.state_dict() for model in self.bo_models]
 
     def fit_critic(self, X: pd.DataFrame, z: torch.Tensor) -> None:
@@ -240,10 +245,10 @@ class DosingPolicy:
         """
         if self.constant is not None:
             return self.constant
-        alphas = torch.from_numpy(np.linspace(0.0, 1.0, num=201))
-        alphas = alphas.to(self.device)
-        scores = self._score(alphas, dataset)
-        return alphas[torch.argmax(scores, dim=-1)]
+        alpha = torch.from_numpy(np.linspace(0.0, 1.0, num=201))
+        alpha = alpha.to(self.device)
+        scores = self._score(alpha, dataset)
+        return alpha[torch.argmax(scores, dim=-1)]
 
     def _score(self, alpha: torch.Tensor, X: pd.DataFrame) -> torch.Tensor:
         """
@@ -262,12 +267,22 @@ class DosingPolicy:
         )
         zstar = self._search(alpha, X).detach()
         Wd = (torch.mean(self.critic(P)) - self.critic(zstar)).squeeze(dim=-1)
-        return ((1.0 - alpha) * self.surrogate(zstar).squeeze(dim=-1)) + (
-            alpha * Wd
+        return torch.where(
+            torch.linalg.norm(zstar, dim=-1) > 0.0,
+            ((1.0 - alpha) * self.surrogate(zstar).squeeze(dim=-1)) + (
+                alpha * Wd
+            ),
+            -1e12
         )
 
     def _search(
-        self, alpha: torch.Tensor, X: pd.DataFrame, budget: int = 4096
+        self,
+        alpha: torch.Tensor,
+        X: pd.DataFrame,
+        budget: int = 4096,
+        thresh: float = 0.3,
+        discrete_relaxation: float = 4.0,
+        continuous_range: float = 4.0,
     ) -> torch.Tensor:
         """
         Approximates z* for the Lagrange dual function by searching over
@@ -276,6 +291,7 @@ class DosingPolicy:
             alpha: values of alpha to find z* for.
             X: the dataset of patients for which to find z* for.
             budget: number of samples to sample from the normal distribution.
+            thresh: threshold value the norm of the Lagrangian gradient.
         Returns:
             The optimal z* from the sampled latent space points for each datum.
             The returned tensor has shape NAD, where N is the number of
@@ -286,22 +302,33 @@ class DosingPolicy:
         zstar = torch.empty(
             (X.shape[0], alpha.size(dim=0), X.shape[-1]), device=self.device
         )
-        z_min = self.min_z_dose - (5.0 * (self.max_z_dose - self.min_z_dose))
-        z_max = self.max_z_dose + (5.0 * (self.max_z_dose - self.min_z_dose))
-        alpha = torch.from_numpy(np.linspace(0, 1, 201)).to(self.device)
-        alpha = alpha.repeat(budget, 1).T
+        alpha = alpha.repeat(budget, X.shape[-1], 1).permute(2, 0, 1)
         for i in range(len(X)):
-            z = pd.concat([X.iloc[i]] * budget, ignore_index=True).to_numpy()
-            z = z.reshape(-1, X.shape[-1]).astype(np.float64)
-            z[:, dose_idx] = z_min + (self.rng.rand(budget) * (z_max - z_min))
+            z = -discrete_relaxation + (1.0 + 2.0 * discrete_relaxation) * (
+                self.rng.rand(budget, self.dataset.shape[-1])
+            )
+            dose = list(self.dataset.columns).index(self.dose_key)
+            z[:, dose] = self.min_z_dose + (
+                self.rng.rand(budget) * (self.max_z_dose - self.min_z_dose)
+            )
+            age = list(self.dataset.columns).index(self.age_key)
+            height = list(self.dataset.columns).index(self.height_key)
+            weight = list(self.dataset.columns).index(self.weight_key)
+            z[:, age] = -(10.0 * discrete_relaxation) + (
+                10 * (1.0 + 2.0 * discrete_relaxation) * self.rng.rand(budget)
+            )
+            z[:, height] = continuous_range * self.rng.randn(budget)
+            z[:, weight] = continuous_range * self.rng.randn(budget)
             z = torch.from_numpy(z).to(self.device).requires_grad_(True)
-            Df = torch.autograd.grad(self.surrogate(z).sum(), z)[0][
-                :, dose_idx
-            ]
-            z.requires_grad_(True)
-            Dc = torch.autograd.grad(self.critic(z).sum(), z)[0][:, dose_idx]
+            Df = torch.autograd.grad(self.surrogate(z).sum(), z)[0]
+            Dc = torch.autograd.grad(self.critic(z).sum(), z)[0]
             DL = ((1.0 - alpha) * Df) - (alpha * Dc)
-            zstar[i] = z[torch.argmin(torch.abs(DL), dim=-1)]
+            norm_DL, best_idxs = torch.min(torch.linalg.norm(DL, dim=-1), dim=-1)
+            zstar[i] = z[best_idxs]
+            best_idxs = torch.where(norm_DL < thresh, best_idxs, -1)
+            with torch.no_grad():
+                for bad_idx in torch.where(best_idxs < 0)[0]:
+                    zstar[i, bad_idx] = torch.zeros_like(zstar[i, bad_idx])
         return zstar
 
 

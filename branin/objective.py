@@ -163,12 +163,13 @@ class Surrogate:
         self.x1_range, self.x2_range = x1_range, x2_range
         self.sampler = qmc.Sobol(d=2, scramble=True, seed=self.seed)
         self.model = MLPRegressor(
-            hidden_layer_sizes=((128,) * 8),
-            learning_rate_init=0.001
+            hidden_layer_sizes=((2048,) * 2),
+            learning_rate_init=0.0002,
+            activation="relu"
         )
 
     def _generate_dataset(
-        self, oracle: Oracle, n: int = 500, exclude_top_p: float = 0.0
+        self, oracle: Oracle, n: int = 1000, exclude_top_p: float = 0.2
     ) -> Tuple[np.ndarray]:
         """
         Generates a dataset observed from nature.

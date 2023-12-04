@@ -31,7 +31,7 @@ def build_objective(
     seed: int = 42,
     plotpath: Optional[Union[Path, str]] = None,
     savepath: Optional[Union[Path, str]] = None,
-    device: torch.device = torch.device("cuda")
+    device: torch.device = torch.device("cpu")
 ) -> float:
     """
     Trains and tests an MLP regressor model as a logP objective estimator.
@@ -49,7 +49,7 @@ def build_objective(
     dm = SELFIESDataModule(
         batch_size=hparams["batch_size"], load_train_data=True, num_workers=0
     )
-    vae = InfoTransformerVAE(dm.train).to(device)
+    vae = InfoTransformerVAE().to(device)
     vae.load_state_dict(
         torch.load(
             "./molecules/checkpoints/vae.pt",
