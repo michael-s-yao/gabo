@@ -1,23 +1,8 @@
 """
-Utility functions for computing the Lipschitz constants of neural networks.
+PyTorch wrapper for sklearn MLPRegressor models.
 
 Author(s):
     Michael Yao @michael-s-yao
-
-Citation(s):
-    [1] Zhang H, Zhang P, Hsieh C. RecurJac: An efficient recursive algorithm
-        for bounding jacobian matrix of neural networks and its applications.
-        Proc 33rd AAAI Conf AI 706:5757-64. (2019). https://doi.org/10.1609/
-        aaai.v33i01.33015757
-    [2] Weng T, Zhang H, Chen H, Song Z, Hsieh C, Boning D, Dhillon IS, Daniel
-        L. Towards fast computation of certified robustness for ReLU networks.
-        ICML 80:5273-82. (2018). https://proceedings.mlr.press/v80/weng18a.html
-    [3] Xu K, Shi Z, Zhang H, Wang Y, Chang K, Huang M, Kailkhura B, Lin X,
-        Hsieh C. Automatic perturbation analysis for scalable certified
-        robustness and beyond. Proc NeurIPS. (2020). https://doi.org/10.48550/
-        arXiv.2002.12920
-    [4] auto_LiRPA GitHub repo from @Verified-Intelligence.
-        https://github.com/Verified-Intelligence/auto_LiRPA
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """

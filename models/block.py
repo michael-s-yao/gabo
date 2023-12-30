@@ -55,8 +55,8 @@ def Block(
     return nn.Sequential(*layer)
 
 
-class ConvBlock(nn.Module):
-    """Implements a convolutional block for a CNN model."""
+class ResCNNBlock(nn.Module):
+    """Defines a 1D convolutional residual block."""
 
     def __init__(
         self,
@@ -65,9 +65,7 @@ class ConvBlock(nn.Module):
         kernel_size: int = 3,
         stride: int = 1,
         padding: int = 1,
-        activation: str = "LeakyReLU",
-        use_batch_norm: bool = True,
-        transpose: bool = False
+        activation: str = "ReLU"
     ):
         """
         Args:
@@ -76,9 +74,7 @@ class ConvBlock(nn.Module):
             kernel_size: kernel size. Default 3.
             stride: stride. Default 1.
             padding: padding. Default 1.
-            activation: activation function. Default `LeakyReLU`.
-            use_batch_norm: whether to apply batch normalization.
-            transpose: whether to use the transposed convolution operator.
+            activation: activation. Default ReLU.
         """
         super().__init__()
         self.in_channels = in_channels
@@ -87,48 +83,38 @@ class ConvBlock(nn.Module):
         self.stride = stride
         self.padding = padding
         self.activation = activation
-        self.use_batch_norm = use_batch_norm
-        self.transpose = transpose
-        if not self.transpose:
-            self.conv = nn.Conv2d(
-                in_channels=self.in_channels,
-                out_channels=self.out_channels,
-                kernel_size=self.kernel_size,
-                stride=self.stride,
-                padding=self.padding
-            )
-        else:
-            self.conv = nn.ConvTranspose2d(
-                in_channels=self.in_channels,
-                out_channels=self.out_channels,
-                kernel_size=self.kernel_size,
-                stride=self.stride,
-                padding=self.padding,
-                output_padding=self.padding
-            )
 
-        if self.activation is None:
-            self.activation = nn.Identity()
-        elif self.activation.lower() == "relu":
-            self.activation = nn.ReLU()
-        elif self.activation.lower() == "leakyrelu":
-            self.activation = nn.LeakyReLU(negative_slope=0.2)
-        elif self.activation.lower() == "sigmoid":
-            self.activation = nn.Sigmoid()
-        elif self.activation.lower() == "gelu":
-            self.activation = nn.GELU()
-
-        if self.use_batch_norm:
-            self.bn = nn.BatchNorm2d(self.out_channels)
-        else:
-            self.bn = nn.Identity()
+        self.conv_1 = nn.Conv1d(
+            self.in_channels,
+            self.out_channels,
+            kernel_size=self.kernel_size,
+            stride=self.stride,
+            padding=self.padding
+        )
+        self.layer_norm_1 = nn.LayerNorm(self.out_channels)
+        self.activation_1 = getattr(nn, self.activation)()
+        self.conv_2 = nn.Conv1d(
+            self.out_channels,
+            self.out_channels,
+            kernel_size=self.kernel_size,
+            stride=self.stride,
+            padding=self.padding
+        )
+        self.layer_norm_2 = nn.LayerNorm(self.out_channels)
+        self.activation_2 = getattr(nn, self.activation)()
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass through the convolutional block.
+        Forward pass through the residual CNN block.
         Input:
-            X: input to the block with dimensions BCHW.
+            X: a 1D signal of shape BCN or CN.
         Returns:
-            model(X) with dimensions BC'HW.
+            model(X) of shape BCN or CN.
         """
-        return self.bn(self.activation(self.conv(X)))
+        h = self.activation_1(
+            self.layer_norm_1(self.conv_1(X.permute(0, 2, 1)).permute(0, 2, 1))
+        )
+        h = self.activation_2(
+            self.layer_norm_2(self.conv_1(X.permute(0, 2, 1)).permute(0, 2, 1))
+        )
+        return X + h

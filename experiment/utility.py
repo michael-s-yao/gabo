@@ -16,30 +16,22 @@ import torch.distributed as dist
 import warnings
 
 
-def seed_everything(seed: int = 42, use_deterministic: bool = True) -> None:
+def seed_everything(seed: int = 42) -> None:
     """
     Random state initialization function. Should be called during
     initialization.
     Input:
         seed: random seed. Default 42.
-        use_deterministic: whether to only use deterministic algorithms.
-            Default True.
     Returns:
         None.
     """
     pl.seed_everything(seed=seed, workers=True)
-    try:
-        torch.use_deterministic_algorithms(use_deterministic)
-    except AttributeError:
-        torch.set_deterministic(use_deterministic)
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = use_deterministic
-
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 

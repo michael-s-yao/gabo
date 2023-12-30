@@ -1,5 +1,5 @@
 """
-Defines and trains a MNIST VAE model.
+Trains and evaluates a fully-connected VAE model for the MNIST dataset.
 
 Author(s):
     Michael Yao
@@ -14,175 +14,88 @@ import matplotlib.pyplot as plt
 import math
 import sys
 import torch
-import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 import torchvision as thv
 from pathlib import Path
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional, Union
 
 sys.path.append(".")
 from experiment.utility import seed_everything, get_device, plot_config
+from models.vae import VAE, VAELoss
 
 
-class VAE(nn.Module):
-    def __init__(
-        self,
-        in_dim: int = 784,
-        hidden_dims: Sequence[int] = [256, 64, 16]
-    ):
-        """
-        Args:
-            in_dim: number of flattened input dimensions into the VAE.
-            hidden_dims: hidden dimensions of the encoder and decoder.
-        """
-        super().__init__()
-        self.in_dim, self.hidden_dims = in_dim, hidden_dims
-        self.hidden_dims = [self.in_dim] + self.hidden_dims
-
-        self.encoder, self.decoder = [], []
-        for i in range(len(self.hidden_dims) - 1):
-            if i < len(self.hidden_dims) - 2:
-                self.encoder += [
-                    nn.Linear(self.hidden_dims[i], self.hidden_dims[i + 1]),
-                    nn.ReLU()
-                ]
-            else:
-                self.mu = nn.Linear(
-                    self.hidden_dims[i], self.hidden_dims[i + 1]
-                )
-                self.logvar = nn.Linear(
-                    self.hidden_dims[i], self.hidden_dims[i + 1]
-                )
-            self.decoder += [
-                nn.Linear(self.hidden_dims[-i - 1], self.hidden_dims[-i - 2]),
-                nn.ReLU() if i < len(self.hidden_dims) - 2 else nn.Sigmoid()
-            ]
-        self.encoder = nn.Sequential(*self.encoder)
-        self.decoder = nn.Sequential(*self.decoder)
-
-    def encode(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
-        """
-        Encodes an image or batch of images into the VAE latent space.
-        Input:
-            X: input image CHW or batch of images BCHW.
-        Returns:
-            z: a vector of point(s) from the VAE latent space (N or BN), where
-                N is the dimensions of the VAE latent space.
-            mu: tensor of means in the latent space (N or BN).
-            logvar: tensor of log variances in the latent space (N or BN).
-        """
-        h = self.encoder(X)
-        mu, logvar = self.mu(h), self.logvar(h)
-        return self.reparameterize(mu, logvar), mu, logvar
-
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """
-        Reconstructs a tensor of point(s) from the VAE latent space into the
-        flattened image space.
-        Input:
-            z: a vector of point(s) from the VAE latent space (N or BN), where
-                N is the dimensions of the VAE latent space.
-        Returns:
-            Reconstructed flattened image C*H*W or batch of images (B(C*H*W)).
-        """
-        return self.decoder(z)
-
-    def reparameterize(
-        self, mu: torch.Tensor, logvar: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Reparametrization trick to sample from the VAE latent space.
-        Input:
-            mu: tensor of means in the latent space (N or BN), where N is the
-                dimensions of the VAE latent space.
-            logvar: tensor of log variances in the latent space (N or BN),
-                where N is the dimensions of the VAE latent space.
-        Returns:
-            A vector of point(s) from the VAE latent space (N or BN).
-        """
-        std = torch.exp(0.5 * logvar)
-        return mu + (torch.randn_like(std) * std)
-
-    def forward(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
-        """
-        Forward pass through the variational autoencoder.
-        Input:
-            X: input image CHW or batch of images BCHW.
-        Returns:
-            recon: reconstructed flattened image C*H*W or batch of images
-                (B(C*H*W)).
-            mu: tensor of means in the latent space (N or BN), where N is the
-                dimensions of the VAE latent space.
-            logvar: tensor of log variances in the latent space (N or BN),
-                where N is the dimensions of the VAE latent space.
-        """
-        z, mu, logvar = self.encode(X.view(-1, self.in_dim))
-        return self.decode(z), mu, logvar
-
-
-def VAELoss(
-    recon: torch.Tensor,
-    X: torch.Tensor,
-    mu: torch.Tensor,
-    logvar: torch.Tensor
-) -> torch.Tensor:
+def build_args() -> argparse.Namespace:
     """
-    Defines the VAE loss function for VAE training.
+    Defines the experimental arguments for MNIST VAE model training.
     Input:
-        recon: reconstructed flattened image C*H*W or batch of images
-            (B(C*H*W)).
-        X: input image CHW or batch of images BCHW.
-        mu: tensor of means in the latent space (N or BN), where N is the
-            dimensions of the VAE latent space.
-        logvar: tensor of log variances in the latent space (N or BN),
-            where N is the dimensions of the VAE latent space.
-    """
-    BCE = F.binary_cross_entropy(recon, X.view(recon.size()), reduction="sum")
-    KLD = -0.5 * torch.sum(1.0 + logvar - torch.pow(mu, 2) - torch.exp(logvar))
-    return BCE + KLD
-
-
-def fit(
-    root: Union[Path, str] = "./mnist/data",
-    batch_size: int = 128,
-    lr: float = 1e-3,
-    num_epochs: int = 50,
-    device: torch.device = torch.device("cpu"),
-    savepath: Union[Path, str] = "./mnist/checkpoints/mnist_vae.pt"
-) -> None:
-    """
-    Main VAE training function.
-    Input:
-        root: root directory containing the MNIST dataset.
-        batch_size: batch size. Default 128.
-        lr: learning rate. Default 1e-3.
-        num_epochs: number of epochs to train. Default 50.
-        device: device for model training. Default CPU.
-        savepath: path to save the model weights to.
-    Returns:
         None.
+    Returns:
+        A namespace containing the experimental argument values.
     """
+    parser = argparse.ArgumentParser(description="MNIST VAE Training")
+
+    parser.add_argument(
+        "--root",
+        type=str,
+        default="data/mnist",
+        help="Root directory containing the MNIST dataset. Default data/mnist"
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=128, help="Batch size. Default 128."
+    )
+    parser.add_argument(
+        "--lr", type=float, default=1e-3, help="Learning rate. Default 1e-3."
+    )
+    parser.add_argument(
+        "--num_epochs",
+        type=int,
+        default=50,
+        help="Number of epochs. Default 50."
+    )
+    parser.add_argument(
+        "--savepath",
+        type=str,
+        default="./checkpoints/mnist_vae.pt",
+        help="Savepath for VAE checkpoint. Default ./checkpoints/mnist_vae.pt"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed. Default 42."
+    )
+    parser.add_argument(
+        "--device", type=str, default="cpu", help="Device. Default CPU."
+    )
+
+    return parser.parse_args()
+
+
+def fit():
+    torch.set_default_dtype(torch.float64)
+    args = build_args()
+    seed_everything(
+        args.seed, use_deterministic=("cuda" not in args.device.lower())
+    )
+    device = get_device(args.device)
+
     train = DataLoader(
         thv.datasets.MNIST(
-            root,
+            args.root,
             train=True,
             download=True,
             transform=thv.transforms.ToTensor()
         ),
-        batch_size=batch_size,
+        batch_size=args.batch_size,
         shuffle=True,
         num_workers=0,
         generator=torch.Generator(device=device)
     )
 
     model = VAE().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     model.train()
-    for epoch in range(num_epochs):
+    for epoch in range(args.num_epochs):
         with tqdm(train, desc=f"Epoch {epoch}", leave=False) as pbar:
             for batch_idx, (X, _) in enumerate(pbar):
                 X = X.to(device)
@@ -192,13 +105,13 @@ def fit(
                 loss.backward()
                 optimizer.step()
                 pbar.set_postfix(train_loss=loss.item())
-    torch.save(model.state_dict(), savepath)
+    torch.save(model.state_dict(), args.savepath)
 
 
 def test(
     checkpoint: Union[Path, str],
     mode: str,
-    root: Union[Path, str] = "./mnist/data",
+    root: Union[Path, str] = "./data/mnist",
     batch_size: int = 128,
     savepath: Optional[Union[Path, str]] = None,
     device: torch.device = torch.device("cpu"),
@@ -286,30 +199,4 @@ def test(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MNIST VAE Training")
-    parser.add_argument(
-        "--seed", type=int, default=42, help="Random seed. Default 42."
-    )
-    parser.add_argument(
-        "--device", type=str, default="cpu", help="Device. Default CPU."
-    )
-    args = parser.parse_args()
-
-    torch.set_default_dtype(torch.float64)
-    torch.set_default_device(args.device)
-    seed_everything(
-        args.seed, use_deterministic=("cuda" not in args.device.lower())
-    )
-    device = get_device(args.device)
-    model_path = f"./mnist/checkpoints/mnist_vae_{args.seed}.pt"
-    fit(savepath=model_path, device=device)
-    test(
-        model_path,
-        mode="recon",
-        savepath=f"./mnist/docs/vae_recon_{args.seed}.png"
-    )
-    test(
-        model_path,
-        mode="sample",
-        savepath=f"./mnist/docs/vae_sample_{args.seed}.png"
-    )
+    fit()

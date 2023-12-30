@@ -112,6 +112,8 @@ wandb/
 output/
 progress/
 molecules/docs/
+mnist/checkpoints/
+checkpoints/
 
 # Datasets
 mnist/data/MNIST/
@@ -123,3 +125,9 @@ molecules/state_dict/
 molecules/checkpoints/
 molecules/cache.pkl
 mnist/checkpoints/
+
+db-results/
+
+# Logs and scripts
+*.out
+*.sh

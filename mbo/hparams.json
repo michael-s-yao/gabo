@@ -1,0 +1,22 @@
+{
+  "Branin-Branin-v0": {
+
+  },
+  "MNISTIntensity-L2-v0": {
+    "batch_size": 8,
+    "budget": 256,
+    "z_bound": 4.0,
+    "c": 0.05,
+    "critic_lr": 0.001,
+    "critic_patience": 100,
+    "num_generator_per_critic": 4,
+    "search_budget": 4096,
+    "norm_thresh": 1e-4,
+    "num_restarts": 10,
+    "raw_samples": 256,
+    "verbose": true
+  },
+  "PenalizedLogP-Guacamol-v0": {
+
+  }
+}

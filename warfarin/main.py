@@ -25,7 +25,7 @@ from warfarin.dataset import WarfarinDataset
 from warfarin.dosing import WarfarinDose
 from warfarin.policy import DosingPolicy
 from warfarin.transform import PowerNormalizeTransform
-from models.lipschitz import FrozenMLPRegressor
+from models.wrapper import FrozenMLPRegressor
 from experiment.utility import seed_everything
 
 

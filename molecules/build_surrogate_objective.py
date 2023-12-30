@@ -23,6 +23,7 @@ from models.fcnn import FCNN
 from molecules.data import SELFIESDataModule
 from molecules.vae import InfoTransformerVAE
 from molecules.utils import MoleculeObjective
+from experiment.utility import seed_everything
 
 
 def build_objective(
@@ -30,7 +31,6 @@ def build_objective(
     cache_fn: Union[Path, str] = "./molecules/cache.pkl",
     seed: int = 42,
     plotpath: Optional[Union[Path, str]] = None,
-    savepath: Optional[Union[Path, str]] = None,
     device: torch.device = torch.device("cpu")
 ) -> float:
     """
@@ -39,11 +39,11 @@ def build_objective(
         hparams: the file path to the JSON file with the model hyperparameters.
         seed: random seed. Default 42.
         plotpath: optional path to save the histogram plot to. Default None.
-        savepath: optional path to save the model to. Default None.
         device: device to run model training on. Default GPU.
     Returns:
         RMSE value on the test dataset.
     """
+    seed_everything(seed=seed, use_deterministic=False)
     with open(hparams, "rb") as f:
         hparams = json.load(f)
     dm = SELFIESDataModule(
@@ -143,7 +143,7 @@ def build_objective(
             best_loss, best_epoch = val_loss, epoch
             torch.save(
                 surrogate.state_dict(),
-                f"./molecules/checkpoints/{epoch}_surrogate.pt"
+                f"./molecules/checkpoints/seed_{seed}/{epoch}_surrogate.pt"
             )
         if epoch - best_epoch > hparams["patience"] > 0:
             break
@@ -153,4 +153,4 @@ def build_objective(
 
 
 if __name__ == "__main__":
-    build_objective()
+    build_objective(seed=43, device=torch.device("cuda:1"))

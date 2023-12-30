@@ -25,7 +25,7 @@ from typing import Optional
 
 sys.path.append(".")
 from models.fcnn import FCNN
-from models.critic import WeightClipper
+from models.clamp import WeightClipper
 
 
 class MoleculePolicy:
