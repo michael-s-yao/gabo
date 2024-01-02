@@ -15,7 +15,7 @@ from botorch.models import SingleTaskGP
 from botorch.utils.transforms import normalize, unnormalize
 from botorch.models.transforms import Standardize
 from botorch.optim import optimize_acqf
-from botorch import fit_gpytorch_mll
+from botorch import fit_gpytorch_model
 from botorch.acquisition.monte_carlo import qExpectedImprovement
 from gpytorch.mlls.exact_marginal_log_likelihood import (
     ExactMarginalLogLikelihood
@@ -130,7 +130,7 @@ class MoleculePolicy:
             model.load_state_dict(self.state_dict)
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
         mll.to(z)
-        fit_gpytorch_mll(mll)
+        fit_gpytorch_model(mll)
         self.model = model
 
     def save_current_state_dict(self) -> None:

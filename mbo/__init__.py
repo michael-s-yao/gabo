@@ -24,6 +24,7 @@ from typing import Callable, Dict, Union
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 sys.path.append(".")
+sys.path.append("design-baselines")
 torch.set_default_dtype(torch.float64)
 transformers.logging.set_verbosity_error()
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -56,16 +57,18 @@ class OracleWrapper:
     """Wrapper class for the oracle function for MBO tasks."""
 
     def __init__(
-        self, task: str, dataset: Union[ContinuousDataset, DiscreteDataset]
+        self,
+        task_name: str,
+        dataset: Union[ContinuousDataset, DiscreteDataset]
     ):
         """
         Args:
-            task: the name of the model-based optimization (MBO) task.
+            task_name: the name of the model-based optimization (MBO) task.
             dataset: the dataset associated with the MBO task.
         """
-        self.task = task
+        self.task_name = task_name
         self.dataset = dataset
-        self.oracle = self._task_oracle[self.task]
+        self.oracle = self._task_oracle[self.task_name]
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
         """
@@ -75,12 +78,15 @@ class OracleWrapper:
         Returns:
             The values of the oracle for each input design.
         """
-        if self.task == MOLECULE_TASK:
+        if self.task_name == MOLECULE_TASK:
+            if issubclass(x.dtype.type, np.floating):
+                x = self.dataset.to_integers(x)
             x = x[np.newaxis, ...] if x.ndim == 1 else x
-            return np.array([
+            y = np.array([
                 [self.oracle(sf.decoder(self.dataset.data.decode(tok)))]
-                for tok in x
+                for tok in x.astype(np.int32)
             ])
+            return y.astype(np.float32)
         elif self.task == BRANIN_TASK:
             y = self.oracle(torch.from_numpy(x)).detach().cpu().numpy()
             return y[:, np.newaxis]
@@ -106,19 +112,19 @@ class OracleWrapper:
             A dictionary mapping the task name to the oracle function.
         """
         return {
-            "Branin-Branin-v0": Branin(negate=True),
-            "MNISTIntensity-L2-v0": (
+            BRANIN_TASK: Branin(negate=True),
+            MNIST_TASK: (
                 lambda x: np.mean(np.square(x), axis=-1).astype(x.dtype)
             ),
-            "PenalizedLogP-Guacamol-v0": MoleculeObjective("logP")
+            MOLECULE_TASK: MoleculeObjective("logP")
         }
 
 
-def register(task: str) -> None:
+def register(task_name: str) -> None:
     """
     Register a specification for a model-based optimization task.
     Input:
-        task: the name of the model-based optimization task.
+        task_name: the name of the model-based optimization task.
         verbose: whether to print verbose outputs. Default True.
     Returns:
         None.
@@ -129,21 +135,20 @@ def register(task: str) -> None:
         "max_percentile": 100,
         "min_percentile": 0
     }
-    if task == "MNISTIntensity-L2-v0":
-        dataset_kwargs["root"] = "./mnist/data"
-    elif task == "PenalizedLogP-Guacamol-v0":
-        dataset_kwargs["fname"] = "./molecules/data/train_selfie.gz"
-        dataset_kwargs["fname"] = "./molecules/data/val_selfie.gz"
+    if task_name == MNIST_TASK:
+        dataset_kwargs["root"] = "./data/mnist"
+    elif task_name == MOLECULE_TASK:
+        dataset_kwargs["fname"] = "./data/molecules/train_selfie.gz"
 
     design_bench.register(
-        task,
-        TASK_DATASETS[task],
-        oracle=(lambda dataset: OracleWrapper(task, dataset)),
+        task_name,
+        TASK_DATASETS[task_name],
+        oracle=(lambda dataset: OracleWrapper(task_name, dataset)),
         dataset_kwargs=dataset_kwargs
     )
-    logging.info(f"Registered task {task}.")
+    logging.info(f"Registered task {task_name}.")
     return
 
 
-for task in TASK_DATASETS.keys():
-    register(task)
+for task_name in TASK_DATASETS.keys():
+    register(task_name)

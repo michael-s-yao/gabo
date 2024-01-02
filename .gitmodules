@@ -5,3 +5,9 @@
 [submodule "fcd_torch"]
 	path = fcd_torch
 	url = https://github.com/insilicomedicine/fcd_torch.git
+[submodule "design-baselines"]
+	path = design-baselines
+	url = https://github.com/brandontrabucco/design-baselines.git
+[submodule "bonet"]
+	path = bonet
+	url = https://github.com/siddarthk97/bonet.git

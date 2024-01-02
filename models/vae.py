@@ -11,7 +11,7 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch
 import torch.nn as nn
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 
 class VAE(nn.Module):
@@ -107,4 +107,56 @@ class VAE(nn.Module):
                 where N is the dimensions of the VAE latent space.
         """
         z, mu, logvar = self.encode(X.view(-1, self.in_dim))
+        return self.decode(z), mu, logvar
+
+
+class IdentityVAE(nn.Module):
+    """
+    A dummy VAE class where the encoding and decoding layers are the identity
+    function.
+    """
+
+    def __init__(self, in_dim: int, **kwargs):
+        """
+        Args:
+            in_dim: number of flattened input dimensions into the VAE.
+        """
+        super().__init__()
+        self.in_dim, self.latent_size = in_dim, in_dim
+        self.encoder, self.decoder = nn.Identity(), nn.Identity()
+
+    def encode(self, X: torch.Tensor) -> Tuple[Optional[torch.Tensor]]:
+        """
+        Encodes an input design into the VAE latent space.
+        Input:
+            X: an input design or batch of designs.
+        Returns:
+            X: the same unaltered batch of input designs.
+            mu: None.
+            logvar: None.
+        """
+        return self.encoder(X), None, None
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        """
+        Reconstructs a tensor of point(s) from the VAE latent space into the
+        flattened design space.
+        Input:
+            z: an input design or batch of designs.
+        Returns:
+            The same unaltered batch of input designs.
+        """
+        return self.decoder(z)
+
+    def forward(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
+        """
+        Forward pass through the model.
+        Input:
+            X: an input design or batch of designs.
+        Returns:
+            X: the same batch of input designs with flattened shape.
+            mu: None.
+            logvar: None.
+        """
+        z, mu, logvar = self.encode(X.view(-1, X.size(dim=-1)))
         return self.decode(z), mu, logvar

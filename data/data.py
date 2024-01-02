@@ -218,7 +218,7 @@ class PenalizedLogPDataset(DiscreteDataset):
     def __init__(
         self,
         fname: Union[Path, str],
-        cache: Optional[Union[Path, str]] = "molecules/cache.pkl",
+        cache: Optional[Union[Path, str]] = "data/molecules/cache.pkl",
         **kwargs
     ):
         """
@@ -228,9 +228,14 @@ class PenalizedLogPDataset(DiscreteDataset):
         """
         self.fname, self.cache = fname, cache
         self.data = SELFIESDataset(self.fname, load_data=True)
+        self.data.data = [
+            smile
+            for smile in self.data.data
+            if False not in [tok in self.data.vocab for tok in smile]
+        ]
 
         x = self.data.collate_fn([self.data[i] for i in range(len(self.data))])
-        x = x.detach().cpu().numpy().astype(np.float32)
+        x = x.detach().cpu().numpy()
 
         smiles = [
             sf.decoder("".join(self.data.data[i]))
@@ -246,7 +251,7 @@ class PenalizedLogPDataset(DiscreteDataset):
         y = y.astype(np.float32)
 
         super(PenalizedLogPDataset, self).__init__(
-            x, y, num_classes=len(self.data.vocab2idx.keys()), **kwargs
+            x, y, num_classes=self.data.vocab_size, **kwargs
         )
 
 

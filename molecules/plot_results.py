@@ -18,7 +18,6 @@ from typing import Union
 sys.path.append(".")
 from molecules.data import SELFIESDataModule
 from molecules.vae import InfoTransformerVAE
-from molecules.utils import MoleculeObjective
 from fcd_torch import FCD
 
 

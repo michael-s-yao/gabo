@@ -60,10 +60,8 @@ class MoleculeObjective:
             z_logp = (logp - 2.45777691) / 1.43341767
             z_sa = (sa - 3.05352042) / 0.83460587
             z_cycle_length = (cycle_length - 0.04861121) / 0.28746695
-            if z_logp - z_sa - z_cycle_length is None:
-                print(z_logp, z_sa, z_cycle_length)
-                sys.exit(0)
-            return max(z_logp - z_sa - z_cycle_length, -float("inf"))
+            penalized_logp = max(z_logp - z_sa - z_cycle_length, -float("inf"))
+            return -1e12 if penalized_logp is None else penalized_logp
         score = self.guacamol_objs[self.objective].objective.score(smile)
         if score is None:
             return None

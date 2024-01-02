@@ -1,6 +1,17 @@
 {
   "Branin-Branin-v0": {
-
+    "batch_size": 8,
+    "budget": 256,
+    "z_bound": [[-5.0, 0.0], [10.0, 15.0]],
+    "c": 0.1,
+    "critic_lr": 0.01,
+    "critic_patience": 100,
+    "num_generator_per_critic": 4,
+    "search_budget": 4096,
+    "norm_thresh": 0.1,
+    "num_restarts": 10,
+    "raw_samples": 128,
+    "verbose": true
   },
   "MNISTIntensity-L2-v0": {
     "batch_size": 8,

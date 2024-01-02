@@ -126,6 +126,8 @@ molecules/checkpoints/
 molecules/cache.pkl
 mnist/checkpoints/
 
+data/molecules
+
 db-results/
 
 # Logs and scripts

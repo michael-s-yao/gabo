@@ -50,10 +50,13 @@ def main():
     budget = hparams.pop("budget")
     num_generator_per_critic = hparams.pop("num_generator_per_critic")
 
-    bounds = torch.tensor(
-        [[-z_bound] * vae.latent_size, [z_bound] * vae.latent_size],
-        device=device
-    )
+    if isinstance(z_bound, float):
+        bounds = torch.tensor(
+            [[-z_bound] * vae.latent_size, [z_bound] * vae.latent_size],
+            device=device
+        )
+    else:
+        bounds = torch.tensor(z_bound, device=device)
 
     policy = COMBOSCRPolicy(
         vae.latent_size,
@@ -171,7 +174,7 @@ def load_vae_and_surrogate_models(
         )
         logging.info(f"Trained model can be found at {ckpt}")
     model = JointVAESurrogate.load_from_checkpoint(
-        ckpt, map_location=device, task=task
+        ckpt, map_location=device, task=task, task_name=task_name
     )
     model = model.to(device).eval()
     return model.vae, model.surrogate
@@ -199,7 +202,7 @@ def fit_vae_and_surrogate_models(
         None.
     """
     dm = DesignBenchDataModule(task=task, device=device)
-    model = JointVAESurrogate(task=task, lr=lr)
+    model = JointVAESurrogate(task=task, task_name=task_name, lr=lr)
     devices = "".join(filter(str.isdigit, device))
     devices = [int(devices)] if len(devices) > 0 else "auto"
     accelerator = device.split(":")[0].lower()

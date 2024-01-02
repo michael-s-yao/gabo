@@ -15,14 +15,16 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import sys
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import pytorch_lightning as pl
 from typing import Dict, Tuple
 
 sys.path.append(".")
+import mbo
 from models.fcnn import FCNN
-from models.vae import VAE
+from models.vae import VAE, IdentityVAE
 from models.seqvae import SequentialVAE
 from design_bench.task import Task
 
@@ -31,6 +33,7 @@ class JointVAESurrogate(pl.LightningModule):
     def __init__(
         self,
         task: Task,
+        task_name: str,
         lr: float = 1e-3,
         alpha: float = 1e-5,
         beta: float = 1.0,
@@ -39,6 +42,7 @@ class JointVAESurrogate(pl.LightningModule):
         """
         Args:
             task: offline MBO task.
+            task_name: name of the offline MBO task.
             lr: learning rate. Default 1e-3.
             alpha: relative weighting for the KLD term in the ELBO loss.
             beta: relative weighting for the regressor loss term.
@@ -46,8 +50,12 @@ class JointVAESurrogate(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters(ignore="task")
         self.task = task
+        self.task_name = task_name
 
-        if self.task.is_discrete:
+        if self.task_name == mbo.BRANIN_TASK:
+            self.vae = IdentityVAE(in_dim=self.task.input_shape[0], **kwargs)
+            self.hparams.beta = 1.0
+        elif self.task.is_discrete:
             self.vae = SequentialVAE(in_dim=self.task.input_shape[0], **kwargs)
         else:
             self.vae = VAE(in_dim=self.task.input_shape[0], **kwargs)
@@ -132,10 +140,10 @@ class JointVAESurrogate(pl.LightningModule):
         Returns:
             The optimizer for model training.
         """
-        return optim.Adam(
-            list(self.vae.parameters()) + list(self.surrogate.parameters()),
-            lr=self.hparams.lr
-        )
+        params = list(self.surrogate.parameters())
+        if not isinstance(self.vae, IdentityVAE):
+            params += list(self.vae.parameters())
+        return optim.Adam(params, lr=self.hparams.lr)
 
     def recon_loss(
         self, recon: torch.Tensor, X: torch.Tensor
@@ -149,6 +157,8 @@ class JointVAESurrogate(pl.LightningModule):
         Returns:
             The mean reconstruction loss term of the ELBO loss.
         """
+        if self.task_name == mbo.BRANIN_TASK:
+            return 0.0
         if self.task.is_discrete:
             return F.cross_entropy(
                 recon.reshape(-1, self.vae.vocab_size),
@@ -166,6 +176,8 @@ class JointVAESurrogate(pl.LightningModule):
         Returns:
             The mean KL divergence loss term of the ELBO loss.
         """
+        if mu is None or logvar is None:
+            return 0.0
         return -0.5 * torch.sum(
             1.0 + logvar - torch.pow(mu, 2) - torch.exp(logvar)
         )

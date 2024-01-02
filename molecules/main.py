@@ -213,11 +213,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    seed_everything(
-        args.seed, use_deterministic=("cuda" not in args.device.lower())
-    )
+    seed_everything(args.seed)
     torch.set_default_dtype(torch.float64)
-    torch.set_default_device(args.device)
     main(
         alpha=args.alpha,
         device=torch.device(args.device),
