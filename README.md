@@ -1,45 +1,54 @@
-# Constrained In-Distribution Optimization for Generative Networks via Source Discriminator Regularization
+# Conservative Offline Model-Based Policy Optimization Over Latent Spaces via Source Critic Regularization 
 
 [![LICENSE](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.md)
 [![CONTACT](https://img.shields.io/badge/contact-michael.yao%40pennmedicine.upenn.edu-blue)](mailto:michael.yao@pennmedicine.upenn.edu)
 [![CONTACT](https://img.shields.io/badge/contact-obastani%40seas.upenn.edu-blue)](mailto:obastani@seas.upenn.edu)
 
-Na&iuml;vely training a generative model to optimize an objective function can result in a generated distribution out-of-domain compared to the training distribution. This is a common problem encountered in the protein design space: in trying to maximize protein-target interactions, generated proteins are often non-physiologic and cannot be easily synthesized *in-vivo*. In this work, we aim to solve this problem through proposing a technique to regularize the optimization problem using a source-discriminator similar to that used in [Generative Adversarial Nets (GANs)](https://arxiv.org/abs/1406.2661). We show that our method is able to optimize an objective function subject to staying reasonably in-distribution.
+Offline model-based policy optimization seeks to optimize a learned surrogate objective function without querying the true oracle objective during optimization. However, inaccurate surrogate model predictions are frequently encountered in this setting. To address this limitation, we propose *adaptive source critic regularization* that utilizes a Lipschitz-constrained source critic agent to constrain the optimization trajectory to regions where the surrogate performs well. We show that under certain assumptions for the continuous input space prior, we can dynamically adjust the strength of the source critic regularization, which consistently outperforms existing baselines on a number of different optimization tasks across a variety of domains. Our work provides a practical framework for offline policy optimization via source critic regularization.
 
 ## Installation
 
 To install and run our code, first clone the `OODOptimization` repository.
 
 ```
+cd ~
 git clone https://github.com/michael-s-yao/OODOptimization
 cd OODOptimization
 ```
 
-Next, create a virtual environment and install the relevant dependencies.
+Next, create a [`conda` environment](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file) from the `environment.yml` file to setup the environment and install the relevant dependencies.
 
 ```
-python -m venv env
-source env/bin/activate
-pip install -r requirements.txt
+conda env create -f environment.yml
+```
+
+If you are running our codebase on a GPU, please also run the following commands:
+
+```
+python -m pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0+cu113 --extra-index-url https://download.pytorch.org/whl/cu113
+```
+
+Finally, there is a minor versioning conflict between the installed dependences that requires one line in a package to be modified. More specifically, please navigate to the location of the installed `transformers` package:
+
+```
+cd /home/usr/miniconda3/envs/combo-scr/lib/python3.8/site-packages/transformers
+vim trainer_pt_utils.py
+```
+
+In the `trainer_pt_utils.py` source code, file, please change the line `if version.parse(torch.__version__) <= version.parse("1.4.1"):` to `if version.parse(torch.__version__) <= version.parse("1.12.1"):`. Finally, please copy the [`smiles_vocab.txt`](./data/molecules/smiles_vocab.txt) file to the `design_bench_data` package directory:
+
+```
+cd ~/OODOptimization
+cp -p data/molecules/smiles_vocab.txt /home/usr/miniconda3/envs/combo-scr/lib/python3.8/site-packages/design_bench_data/
 ```
 
 After successful setup, you can run our code as
 
 ```
-python main.py --optimizer [OPTIMIZER] --alpha [ALPHA]
+python mbo/comboscr.py --help
 ```
 
-Our codebase uses [Weights & Biases](https://wandb.ai/site) for experiment tracking. If you would prefer not to use W&B for experiment tracking, you can disable it using
-
-```
-python main.py --optimizer [OPTIMIZER] --alpha [ALPHA] --disable_wandb
-```
-
-For other script arguments, you can run
-
-```
-python main.py --help
-```
+To replicate our experiments, please refer to the [`scripts`](./scripts) directory for relevant shell scripts.
 
 ## Contact
 

@@ -120,11 +120,9 @@ data/mnist/MNIST/
 data/__pycache__/
 *.tar.gz
 warfarin/data/*.xls
-molecules/data/
-molecules/state_dict/
-molecules/checkpoints/
-molecules/cache.pkl
-mnist/checkpoints/
-data/molecules
+data/molecules/*.gz
+data/molecules/*.pkl
+data/molecules/*.csv
+
 db-results/
 *.out

@@ -33,5 +33,5 @@ class MNISTOracle(nn.Module):
         X = X[np.newaxis] if X.ndim % 2 else X
         X = X.reshape(X.shape[0], -1)
         if isinstance(X, np.ndarray):
-            return np.mean(np.square(X.reshape), axis=-1).astype(X.dtype)
-        return torch.mean(torch.square(X.reshape), dim=-1).to(X.dtype)
+            return np.mean(np.square(X), axis=-1).astype(X.dtype)
+        return torch.mean(torch.square(X), dim=-1).to(X.dtype)
