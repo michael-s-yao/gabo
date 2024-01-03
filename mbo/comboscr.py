@@ -30,7 +30,8 @@ from mbo.args import build_args
 from data.data import DesignBenchDataModule
 from models.policy import COMBOSCRPolicy
 from models.joint import JointVAESurrogate
-from experiment.utility import get_device, seed_everything
+from models.oracle.branin import BraninOracle
+from utils import get_device, seed_everything
 
 
 def main():
@@ -39,16 +40,16 @@ def main():
     seed_everything(args.seed)
     task = design_bench.make(args.task)
 
-    vae, surrogate = load_vae_and_surrogate_models(
-        task, args.task, device=device
-    )
-
     with open("./mbo/hparams.json", "rb") as f:
         hparams = json.load(f)[args.task]
     z_bound = hparams.pop("z_bound")
     batch_size = hparams.pop("batch_size")
     budget = hparams.pop("budget")
     num_generator_per_critic = hparams.pop("num_generator_per_critic")
+
+    vae, surrogate = load_vae_and_surrogate_models(
+        task, args.task, device=device, **hparams
+    )
 
     if isinstance(z_bound, float):
         bounds = torch.tensor(
@@ -59,6 +60,7 @@ def main():
         bounds = torch.tensor(z_bound, device=device)
 
     policy = COMBOSCRPolicy(
+        args.task,
         vae.latent_size,
         bounds,
         torch.from_numpy(task.x).to(device),
@@ -68,6 +70,8 @@ def main():
         device=device,
         **hparams
     )
+
+    oracle = BraninOracle(negate=True)
 
     # Choose the initial set of observations.
     a, Wds = [], []
@@ -87,9 +91,7 @@ def main():
     y = (1.0 - alpha) * surrogate(z) - alpha * F.relu(
         policy.wasserstein(z_ref.detach(), z.detach()).unsqueeze(dim=-1)
     )
-    y_gt = torch.unsqueeze(
-        torch.mean(torch.square(vae.decode(z)), dim=-1), dim=-1
-    )
+    y_gt = torch.unsqueeze(oracle(z), dim=-1)
     y, y_gt = y.unsqueeze(dim=1), y_gt.unsqueeze(dim=1)
 
     for step in range(math.ceil(budget / batch_size) - 1):
@@ -109,16 +111,13 @@ def main():
                 dim=-1
             )
         )
-        new_gt = torch.unsqueeze(
-            torch.mean(torch.square(vae.decode(new_z)), dim=-1), dim=-1
-        )
+        new_gt = torch.unsqueeze(oracle(new_z), dim=-1)
         new_y, new_gt = new_y.unsqueeze(dim=1), new_gt.unsqueeze(dim=1)
 
         # Update training points.
         z = torch.cat((z, new_z), dim=0)
         y = torch.cat((y, new_y), dim=1)
         y_gt = torch.cat((y_gt, new_gt), dim=1)
-        print(z.size(), y.size(), y_gt.size())
 
         # Update progress.
         policy.save_current_state_dict()
@@ -150,7 +149,8 @@ def load_vae_and_surrogate_models(
     task: design_bench.task.Task,
     task_name: str,
     ckpt_dir: Union[Path, str] = "./checkpoints",
-    device: torch.device = torch.device("cpu")
+    device: torch.device = torch.device("cpu"),
+    **kwargs
 ) -> Union[nn.Module]:
     """
     Loads a trained VAE model and/or trained surrogate models for model-based
@@ -170,7 +170,7 @@ def load_vae_and_surrogate_models(
     if not os.path.isfile(ckpt):
         logging.info(f"Model {ckpt} does not exist, training now...")
         fit_vae_and_surrogate_models(
-            task, task_name, ckpt_dir=ckpt_dir, device=str(device)
+            task, task_name, ckpt_dir=ckpt_dir, device=str(device), **kwargs
         )
         logging.info(f"Trained model can be found at {ckpt}")
     model = JointVAESurrogate.load_from_checkpoint(
@@ -186,7 +186,8 @@ def fit_vae_and_surrogate_models(
     ckpt_dir: Union[Path, str] = "./checkpoints",
     device: str = "auto",
     lr: float = 0.001,
-    num_epochs: int = 100
+    num_epochs: int = 100,
+    **kwargs
 ) -> None:
     """
     Jointly trains a VAE model and surrogate models for model-based
@@ -202,7 +203,7 @@ def fit_vae_and_surrogate_models(
         None.
     """
     dm = DesignBenchDataModule(task=task, device=device)
-    model = JointVAESurrogate(task=task, task_name=task_name, lr=lr)
+    model = JointVAESurrogate(task=task, task_name=task_name, lr=lr, **kwargs)
     devices = "".join(filter(str.isdigit, device))
     devices = [int(devices)] if len(devices) > 0 else "auto"
     accelerator = device.split(":")[0].lower()

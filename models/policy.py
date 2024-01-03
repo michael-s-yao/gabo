@@ -10,6 +10,7 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import numpy as np
+import os
 import sys
 import torch
 import torch.nn as nn
@@ -34,6 +35,7 @@ from models.clamp import WeightClipper
 class COMBOSCRPolicy:
     def __init__(
         self,
+        task_name: str,
         z_dim: int,
         bounds: torch.Tensor,
         ref_dataset: torch.utils.data.Dataset,
@@ -54,6 +56,7 @@ class COMBOSCRPolicy:
     ):
         """
         Args:
+            task_name: name of the MBO task.
             z_dim: input dimensions.
             bounds: a 2x(z_dim) tensor of the lower and upper sampling bounds.
             ref_dataset: a reference dataset of true datums from nature.
@@ -280,10 +283,8 @@ class COMBOSCRPolicy:
         """
         alpha = alpha.repeat(self.hparams.search_budget, self.hparams.z_dim, 1)
         alpha = alpha.permute(2, 0, 1).to(self.hparams.device)
-        z = torch.randn((self.hparams.search_budget, self.hparams.z_dim))
-        z = z.to(self.hparams.device)
-        z = unnormalize(z.detach(), bounds=self.hparams.bounds)
-        z = z.requires_grad_(True)
+        z = self.prior().to(self.hparams.device).detach()
+        z = unnormalize(z, bounds=self.hparams.bounds).requires_grad_(True)
         Df = torch.autograd.grad(self.hparams.surrogate(z).sum(), z)[0]
         z = z.requires_grad_(True)
         Dc = torch.autograd.grad(self.critic(z).sum(), z)[0]
@@ -297,3 +298,15 @@ class COMBOSCRPolicy:
             for bad_idx in torch.where(best_idxs < 0)[0]:
                 z[bad_idx] = torch.zeros_like(z[bad_idx])
         return z
+
+    def prior(self) -> torch.Tensor:
+        """
+        Returns samples over the prior of the latent space distribution.
+        Input:
+            None.
+        Returns:
+            Samples from the prior of the latent space distribution.
+        """
+        if self.hparams.task_name == os.environ["BRANIN_TASK"]:
+            return torch.rand(self.hparams.search_budget, self.hparams.z_dim)
+        return torch.randn((self.hparams.search_budget, self.hparams.z_dim))

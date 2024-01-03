@@ -12,10 +12,24 @@ import torch.nn as nn
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, model_dim: int, max_len: int = 5000):
+    def __init__(
+        self,
+        model_dim: int,
+        dropout: float = 0.0,
+        max_len: int = 5000
+    ):
+        """
+        Positional encoding module.
+        Input:
+            model_dim: dimensions of the input into the model.
+            dropout: dropout probability. Default 0.0.
+            max_len: maximum input length to use for positional encoding.
+                Default 5,000.
+        """
         super().__init__()
         self.model_dim = model_dim
         self.max_len = max_len
+        self.dropout = nn.Dropout(p=dropout)
 
         position = torch.unsqueeze(torch.arange(self.max_len), dim=-1)
         div_term = torch.exp(
@@ -36,4 +50,4 @@ class PositionalEncoding(nn.Module):
             PE(x_embed).
         """
         x_encode = x_embed.permute(1, 0, 2) + self.pe[:x_embed.size(dim=1)]
-        return x_encode.permute(1, 0, 2)
+        return self.dropout(x_encode.permute(1, 0, 2))

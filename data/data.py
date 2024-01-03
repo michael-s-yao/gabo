@@ -28,8 +28,8 @@ from design_bench.datasets.continuous_dataset import ContinuousDataset
 from design_bench.task import Task
 
 sys.path.append(".")
-from molecules.data import SELFIESDataset
-from molecules.utils import MoleculeObjective
+from data.molecules.selfies import SELFIESDataset
+from models.oracle.molecule import MoleculeOracle
 
 
 class DesignBenchDataModule(pl.LightningDataModule):
@@ -171,6 +171,7 @@ class BraninDataset(ContinuousDataset):
             x, y = x[idxs], y[idxs]
         idxs = self.rng.permutation(len(x))
         x, y = x[idxs], y[idxs][..., np.newaxis]
+        x, y = x.astype(np.float32), y.astype(np.float32)
         super(BraninDataset, self).__init__(x, y, **kwargs)
 
 
@@ -242,7 +243,7 @@ class PenalizedLogPDataset(DiscreteDataset):
             for i in range(len(self.data))
         ]
         if self.cache is None or not os.path.isfile(self.cache):
-            self.objective = MoleculeObjective("logP")
+            self.objective = MoleculeOracle("logP")
             y = np.array([[self.objective(smi)] for smi in smiles])
         else:
             with open(self.cache, "rb") as f:

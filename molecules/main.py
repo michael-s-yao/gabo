@@ -21,7 +21,7 @@ from botorch.exceptions.warnings import BadInitialCandidatesWarning
 from botorch.utils.transforms import unnormalize
 
 sys.path.append(".")
-from molecules.data import SELFIESDataModule
+from data.molecules.selfies import SELFIESDataModule
 from molecules.vae import InfoTransformerVAE
 from molecules.policy import MoleculePolicy
 from molecules.utils import MoleculeObjective

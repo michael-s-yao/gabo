@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Union
 
 sys.path.append(".")
-from molecules.data import SELFIESDataModule
+from data.molecules.selfies import SELFIESDataModule
 from molecules.vae import InfoTransformerVAE
 from fcd_torch import FCD
 

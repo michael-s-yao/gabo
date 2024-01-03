@@ -19,7 +19,6 @@ import logging
 import torch
 import transformers
 import warnings
-from botorch.test_functions.synthetic import Branin
 from typing import Callable, Dict, Union
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -34,22 +33,15 @@ from design_bench.datasets.discrete_dataset import DiscreteDataset
 from data.data import (
     BraninDataset, MNISTIntensityDataset, PenalizedLogPDataset
 )
-from molecules.utils import MoleculeObjective
-
-
-BRANIN_TASK = "Branin-Branin-v0"
-
-
-MNIST_TASK = "MNISTIntensity-L2-v0"
-
-
-MOLECULE_TASK = "PenalizedLogP-Guacamol-v0"
+from models.oracle.branin import BraninOracle
+from models.oracle.mnist import MNISTOracle
+from models.oracle.molecule import MoleculeOracle
 
 
 TASK_DATASETS = {
-    BRANIN_TASK: BraninDataset,
-    MNIST_TASK: MNISTIntensityDataset,
-    MOLECULE_TASK: PenalizedLogPDataset,
+    os.environ["BRANIN_TASK"]: BraninDataset,
+    os.environ["MNIST_TASK"]: MNISTIntensityDataset,
+    os.environ["MOLECULE_TASK"]: PenalizedLogPDataset,
 }
 
 
@@ -78,7 +70,7 @@ class OracleWrapper:
         Returns:
             The values of the oracle for each input design.
         """
-        if self.task_name == MOLECULE_TASK:
+        if self.task_name == os.environ["MOLECULE_TASK"]:
             if issubclass(x.dtype.type, np.floating):
                 x = self.dataset.to_integers(x)
             x = x[np.newaxis, ...] if x.ndim == 1 else x
@@ -87,7 +79,7 @@ class OracleWrapper:
                 for tok in x.astype(np.int32)
             ])
             return y.astype(np.float32)
-        elif self.task == BRANIN_TASK:
+        elif self.task_name == os.environ["BRANIN_TASK"]:
             y = self.oracle(torch.from_numpy(x)).detach().cpu().numpy()
             return y[:, np.newaxis]
         return self.oracle(x)[:, np.newaxis]
@@ -112,11 +104,9 @@ class OracleWrapper:
             A dictionary mapping the task name to the oracle function.
         """
         return {
-            BRANIN_TASK: Branin(negate=True),
-            MNIST_TASK: (
-                lambda x: np.mean(np.square(x), axis=-1).astype(x.dtype)
-            ),
-            MOLECULE_TASK: MoleculeObjective("logP")
+            os.environ["BRANIN_TASK"]: BraninOracle(),
+            os.environ["MNIST_TASK"]: MNISTOracle(),
+            os.environ["MOLECULE_TASK"]: MoleculeOracle("logP")
         }
 
 
@@ -135,10 +125,10 @@ def register(task_name: str) -> None:
         "max_percentile": 100,
         "min_percentile": 0
     }
-    if task_name == MNIST_TASK:
+    if task_name == os.environ["MNIST_TASK"]:
         dataset_kwargs["root"] = "./data/mnist"
-    elif task_name == MOLECULE_TASK:
-        dataset_kwargs["fname"] = "./data/molecules/train_selfie.gz"
+    elif task_name == os.environ["MOLECULE_TASK"]:
+        dataset_kwargs["fname"] = "./data/molecules/val_selfie.gz"
 
     design_bench.register(
         task_name,

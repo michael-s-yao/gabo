@@ -116,8 +116,8 @@ mnist/checkpoints/
 checkpoints/
 
 # Datasets
-mnist/data/MNIST/
-mnist/data/__pycache__/
+data/mnist/MNIST/
+data/__pycache__/
 *.tar.gz
 warfarin/data/*.xls
 molecules/data/
@@ -125,11 +125,6 @@ molecules/state_dict/
 molecules/checkpoints/
 molecules/cache.pkl
 mnist/checkpoints/
-
 data/molecules
-
 db-results/
-
-# Logs and scripts
 *.out
-*.sh

@@ -20,7 +20,7 @@ from typing import Optional, Union
 
 sys.path.append(".")
 from models.fcnn import FCNN
-from molecules.data import SELFIESDataModule
+from data.molecules.selfies import SELFIESDataModule
 from molecules.vae import InfoTransformerVAE
 from molecules.utils import MoleculeObjective
 from experiment.utility import seed_everything

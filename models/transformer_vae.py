@@ -1,129 +1,39 @@
 """
-Transformer VAE for molecule generation implementation.
+Implements a VAE model with transformer encoder and decoder layers.
 
 Author(s):
     Yimeng Zeng @yimeng-zeng
     Michael Yao @michael-s-yao
 
+Citation(s):
+    [1] Maus NT, Jones HT, Moore JS, Kusner MJ, Bradshaw J, Gardner JR.
+        Local latent space Bayesian optimization over structured inputs.
+        Proc NeurIPS. (2022). https://doi.org/10.48550/arXiv.2201.11872
+
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import os
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import pytorch_lightning as pl
-from pathlib import Path
-from math import log
-from molecules.data import SELFIESDataModule, SELFIESDataset
+from collections import namedtuple
+from data.molecules.selfies import SELFIESDataModule, SELFIESDataset
 from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar
 from typing import Any, Dict, Optional, Tuple, Union
 
-
-def gumbel_softmax(
-    logits: torch.Tensor,
-    tau: float = 1,
-    hard: bool = False,
-    dim: int = -1,
-    return_randoms: bool = False,
-    randoms: Optional[torch.Tensor] = None
-) -> Union[torch.Tensor, Tuple[torch.Tensor]]:
-    """
-    Samples from the Gumbel-Softmax distribution and optionally discretizes.
-    Input:
-        logits: input logits.
-        tau: non-negative scalar temperature. Default 1.
-        hard: whether to return the samples as discretized one-hot vectors.
-        dim: the dimension along whcih softmax will be computed. Default -1.
-        return_randoms: whther to return the random values used for calculating
-            the Gumbel-Softmax values.
-        randoms: the optional values to use for calculating the Gumbel-Softmax
-            values.
-    Returns:
-        ret: samples from the Gumbel-Softmax distribution.
-        randoms: returned if `return_randoms` is True. The values used for
-            calculating the Gumbel-Softmax values.
-    Citation:
-        [1] https://pytorch.org/docs/stable/generated/torch.nn.functional.
-            gumbel_softmax.html#torch.nn.functional.gumbel_softmax
-    """
-    if randoms is None:
-        # ~Gumbel(0, 1).
-        randoms = -1.0 * torch.empty_like(
-            logits, memory_format=torch.legacy_contiguous_format
-        )
-        randoms = randoms.exponential_().log()
-    # ~Gumbel(logits, tau)
-    gumbels = (logits + randoms) / tau
-    y_soft = gumbels.softmax(dim)
-
-    if hard:
-        # Straight through.
-        index = y_soft.max(dim, keepdim=True)[1]
-        y_hard = torch.zeros_like(
-            logits, memory_format=torch.legacy_contiguous_format
-        )
-        y_hard = y_hard.scatter_(dim, index, 1.0)
-        ret = y_hard - y_soft.detach() + y_soft
-    else:
-        # Reparametrization trick.
-        ret = y_soft
-
-    return ret, randoms if return_randoms else ret
+sys.path.append(".")
+from models.pe import PositionalEncoding
 
 
-class PositionalEncoding(nn.Module):
+class InfoTransformerVAE(nn.Module):
     def __init__(
         self,
-        model_dim: int,
-        dropout: float = 0.1,
-        max_len: int = 5_000
-    ):
-        """
-        Positional encoding module to encode position in a molecular string.
-        Input:
-            model_dim: dimensions of the input into the model.
-            dropout: dropout probability. Default 0.1.
-            max_len: maximum input length to use for positional encoding.
-                Default 5,000.
-        """
-        super().__init__()
-        self.model_dim = model_dim
-        self.dropout = dropout
-        self.max_len = max_len
-        self.dropout = nn.Dropout(p=self.dropout)
-
-        position = torch.unsqueeze(torch.arange(self.max_len), dim=1)
-        div_term = torch.exp(
-            torch.arange(0, self.model_dim, 2) * (-log(10_000.0) / model_dim)
-        )
-        pe = torch.zeros(1, self.max_len, self.model_dim)
-        pe[0, :, 0::2] = torch.sin(position * div_term)
-        pe[0, :, 1::2] = torch.cos(position * div_term)
-        self.register_buffer("pe", pe)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through the positional encoder.
-        Input:
-            x: input tensor to be encoded.
-        Returns:
-            Positionally encoded input tensor.
-        """
-        return self.dropout(x + self.pe[:, :x.shape[1], :])
-
-
-class InfoTransformerVAE(pl.LightningModule):
-    """
-    VAE model with transformer encoder and decoder layers.
-    Citation(s):
-        [1] Maus NT, Jones HT, Moore JS, Kusner MJ, Bradshaw J, Gardner JR.
-            Local latent space Bayesian optimization over structured inputs.
-            Proc NeurIPS. (2022). https://doi.org/10.48550/arXiv.2201.11872
-    """
-
-    def __init__(
-        self,
+        vocab2idx: Dict[str, int],
+        start: str,
+        stop: str,
         bottleneck_size: int = 2,
         model_dim: int = 128,
         is_autoencoder: bool = False,
@@ -143,6 +53,9 @@ class InfoTransformerVAE(pl.LightningModule):
     ):
         """
         Args:
+            vocab2idx: a mapping of SELFIES tokens to integer values.
+            start: the start token from the dictionary.
+            stop: the stop token from the dictionary.
             bottleneck_size: size of the model bottleneck. Default 2.
             model_dim: model dimensions. Default 128.
             is_autoencoder: whether to treat the VAE model as an autoencoder.
@@ -165,14 +78,15 @@ class InfoTransformerVAE(pl.LightningModule):
                 Default 5,000.
         """
         super().__init__()
-        self.save_hyperparameters(ignore="dataset")
-        self.dataset = SELFIESDataset()
-        self.hparams.vocab_size = len(self.dataset.vocab)
+        self.hparams = locals()
+        self.save_hyperparameters()
+        self.vocab_size = len(self.hparams.vocab2idx.keys())
+        self.latent_size = self.hparams.model_dim
 
         self.encoder_embedding_dim = 2 * self.hparams.model_dim
 
         self.encoder_token_embedding = nn.Embedding(
-            num_embeddings=self.hparams.vocab_size,
+            num_embeddings=self.vocab_size,
             embedding_dim=self.encoder_embedding_dim
         )
         self.encoder_position_encoding = PositionalEncoding(
@@ -181,7 +95,7 @@ class InfoTransformerVAE(pl.LightningModule):
             max_len=self.hparams.max_len
         )
         self.decoder_token_embedding = nn.Embedding(
-            num_embeddings=self.hparams.vocab_size,
+            num_embeddings=self.vocab_size,
             embedding_dim=self.hparams.model_dim
         )
         self.decoder_position_encoding = PositionalEncoding(
@@ -190,7 +104,7 @@ class InfoTransformerVAE(pl.LightningModule):
             max_len=self.hparams.max_len
         )
         self.decoder_token_unembedding = nn.Parameter(
-            torch.randn(self.hparams.model_dim, self.hparams.vocab_size)
+            torch.randn(self.hparams.model_dim, self.vocab_size)
         )
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
@@ -198,8 +112,7 @@ class InfoTransformerVAE(pl.LightningModule):
                 nhead=self.hparams.encoder_nhead,
                 dim_feedforward=self.hparams.encoder_dim_feedforward,
                 dropout=self.hparams.encoder_dropout,
-                activation="relu",
-                batch_first=True
+                activation="relu"
             ),
             num_layers=self.hparams.encoder_num_layers
         )
@@ -209,8 +122,7 @@ class InfoTransformerVAE(pl.LightningModule):
                 nhead=self.hparams.decoder_nhead,
                 dim_feedforward=self.hparams.decoder_dim_feedforward,
                 dropout=self.hparams.decoder_dropout,
-                activation="relu",
-                batch_first=True
+                activation="relu"
             ),
             num_layers=self.hparams.decoder_num_layers
         )
@@ -258,7 +170,7 @@ class InfoTransformerVAE(pl.LightningModule):
             The corresponding mask telling the encoder to ignore all but the
             first stop token.
         """
-        mask = tokens == self.dataset.vocab2idx[self.dataset.stop]
+        mask = tokens == self.hparams.vocab2idx[self.hparams.stop]
         idxs = torch.argmax(mask.float(), dim=-1)
         mask[torch.arange(0, tokens.shape[0]), idxs] = False
         return mask.to(torch.bool)
@@ -281,6 +193,7 @@ class InfoTransformerVAE(pl.LightningModule):
             embed = self.encoder_token_embedding(tokens)
         embed = self.encoder_position_encoding(embed)
         pad_mask = self.generate_pad_mask(tokens)
+        print(embed.size())
         encoding = self.encoder(embed, src_key_padding_mask=pad_mask)
         mu = encoding[..., :self.hparams.model_dim]
         sigma = self.hparams.min_posterior_std + F.softplus(
@@ -310,7 +223,7 @@ class InfoTransformerVAE(pl.LightningModule):
             [
                 torch.full(
                     (embed.shape[0], 1, embed.shape[-1]),
-                    fill_value=self.dataset.vocab2idx[self.dataset.start],
+                    fill_value=self.hparams.vocab2idx[self.hparams.start],
                     device=self.device
                 ),
                 embed
@@ -362,7 +275,7 @@ class InfoTransformerVAE(pl.LightningModule):
 
         tokens = torch.full(
             (n, 1),
-            fill_value=self.dataset.vocab2idx[self.dataset.start],
+            fill_value=self.hparams.vocab2idx[self.hparams.start],
             dtype=torch.long,
             device=self.device
         )
@@ -376,7 +289,7 @@ class InfoTransformerVAE(pl.LightningModule):
 
             decoding = self.decoder(tgt=tgt, memory=z, tgt_mask=tgt_mask)
             logits = decoding @ self.decoder_token_unembedding
-            sample, randoms = gumbel_softmax(
+            sample, randoms = self.gumbel_softmax(
                 logits, dim=-1, hard=True, return_randoms=True
             )
 
@@ -387,7 +300,7 @@ class InfoTransformerVAE(pl.LightningModule):
             # Check if all molecules have a stop token in them.
             all_stop = torch.all(
                 torch.sum(
-                    tokens == self.dataset.vocab2idx[self.dataset.stop], dim=-1
+                    tokens == self.hparams.vocab2idx[self.hparams.stop], dim=-1
                 ) > 0
             )
             if all_stop.item():
@@ -437,6 +350,74 @@ class InfoTransformerVAE(pl.LightningModule):
             ),
             "sigma_mean": torch.mean(sigma),
         }
+
+    def save_hyperparameters(self) -> None:
+        """
+        Save input hyperparameters of the sampling policy.
+        Input:
+            None.
+        Returns:
+            None.
+        """
+        fields = set(self.hparams.keys())
+        fields.discard("self"), fields.discard("__class__")
+        self.hparams.pop("self", None), self.hparams.pop("__class__", None)
+        self.hparams = namedtuple("hparams", fields)(**self.hparams)
+        for hparam in self.hparams:
+            if isinstance(hparam, (nn.Module, torch.Tensor)):
+                hparam = hparam.to(self.hparams.device)
+
+    def gumbel_softmax(
+        self,
+        logits: torch.Tensor,
+        tau: float = 1,
+        hard: bool = False,
+        dim: int = -1,
+        return_randoms: bool = False,
+        randoms: Optional[torch.Tensor] = None
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor]]:
+        """
+        Samples the Gumbel-Softmax distribution and optionally discretizes.
+        Input:
+            logits: input logits.
+            tau: non-negative scalar temperature. Default 1.
+            hard: whether to return the samples as discretized one-hot vectors.
+            dim: the dimension along whcih softmax will be computed.
+            return_randoms: whther to return the random values used for
+                calculating the Gumbel-Softmax values.
+            randoms: the optional values to use for calculating the
+                Gumbel-Softmax values.
+        Returns:
+            ret: samples from the Gumbel-Softmax distribution.
+            randoms: returned if `return_randoms` is True. The values used for
+                calculating the Gumbel-Softmax values.
+        Citation:
+            [1] https://pytorch.org/docs/stable/generated/torch.nn.functional.
+                gumbel_softmax.html#torch.nn.functional.gumbel_softmax
+        """
+        if randoms is None:
+            # ~Gumbel(0, 1).
+            randoms = -1.0 * torch.empty_like(
+                logits, memory_format=torch.legacy_contiguous_format
+            )
+            randoms = randoms.exponential_().log()
+        # ~Gumbel(logits, tau)
+        gumbels = (logits + randoms) / tau
+        y_soft = gumbels.softmax(dim)
+
+        if hard:
+            # Straight through.
+            index = y_soft.max(dim, keepdim=True)[1]
+            y_hard = torch.zeros_like(
+                logits, memory_format=torch.legacy_contiguous_format
+            )
+            y_hard = y_hard.scatter_(dim, index, 1.0)
+            ret = y_hard - y_soft.detach() + y_soft
+        else:
+            # Reparametrization trick.
+            ret = y_soft
+
+        return ret, randoms if return_randoms else ret
 
 
 class VAEModule(pl.LightningModule):
@@ -649,24 +630,6 @@ class VAEModule(pl.LightningModule):
         )
 
 
-def load(
-    dataset_path: Union[Path, str], checkpoint_path: Union[Path, str]
-) -> Dict[str, Any]:
-    """
-    Loads a dataset and model checkpoint from specified paths.
-    Input:
-        dataset_path: path to the dataset to load.
-        checkpoint_path: path to the model checkpoint to load.
-    Returns:
-        A dictionary containing the specified loaded dataset and model.
-    """
-    dataset = SELFIESDataset(dataset_path)
-    module = VAEModule.load_from_checkpoint(
-        checkpoint_path, map_location=torch.device("cpu"), dataset=dataset
-    )
-    return {"dataset": dataset, "module": module, "model": module.model}
-
-
 def fit() -> None:
     """
     Trains a transformer VAE on the SELFIES molecule dataset.
@@ -697,7 +660,3 @@ def fit() -> None:
         max_epochs=1_000,
     )
     trainer.fit(model, datamodule=datamodule, ckpt_path=checkpath)
-
-
-if __name__ == "__main__":
-    fit()

@@ -14,7 +14,7 @@ from typing import Optional, Union
 
 from data.mnist import MNISTDataModule
 from models.generator import GeneratorModule
-from experiment.utility import seed_everything, plot_config
+from utils import seed_everything, plot_config
 
 
 def build_args() -> argparse.Namespace:
