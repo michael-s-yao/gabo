@@ -11,14 +11,15 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import torch
 import torch.nn as nn
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, Union
 
 
 class VAE(nn.Module):
     def __init__(
         self,
         in_dim: int = 784,
-        hidden_dims: Sequence[int] = [256, 64, 16]
+        hidden_dims: Sequence[int] = [256, 64, 16],
+        **kwargs
     ):
         """
         Args:
@@ -35,7 +36,7 @@ class VAE(nn.Module):
             if i < len(self.hidden_dims) - 2:
                 self.encoder += [
                     nn.Linear(self.hidden_dims[i], self.hidden_dims[i + 1]),
-                    nn.ReLU()
+                    nn.LeakyReLU(negative_slope=0.2)
                 ]
             else:
                 self.mu = nn.Linear(
@@ -46,7 +47,11 @@ class VAE(nn.Module):
                 )
             self.decoder += [
                 nn.Linear(self.hidden_dims[-i - 1], self.hidden_dims[-i - 2]),
-                nn.ReLU() if i < len(self.hidden_dims) - 2 else nn.Sigmoid()
+                (
+                    nn.LeakyReLU(negative_slope=0.2)
+                    if i < len(self.hidden_dims) - 2
+                    else nn.Identity()
+                )
             ]
         self.encoder = nn.Sequential(*self.encoder)
         self.decoder = nn.Sequential(*self.decoder)
@@ -66,7 +71,7 @@ class VAE(nn.Module):
         mu, logvar = self.mu(h), self.logvar(h)
         return self.reparameterize(mu, logvar), mu, logvar
 
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
+    def decode(self, z: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Reconstructs a tensor of point(s) from the VAE latent space into the
         flattened design space.
@@ -100,7 +105,7 @@ class VAE(nn.Module):
         Input:
             X: an input design or batch of designs.
         Returns:
-            recon: reconstructed design or batch of designs.
+            logits: logits of the reconstructed design or batch of designs.
             mu: tensor of means in the latent space (N or BN), where N is the
                 dimensions of the VAE latent space.
             logvar: tensor of log variances in the latent space (N or BN),
@@ -108,6 +113,40 @@ class VAE(nn.Module):
         """
         z, mu, logvar = self.encode(X.view(-1, self.in_dim))
         return self.decode(z), mu, logvar
+
+    @torch.no_grad()
+    def sample(
+        self,
+        n: Optional[int] = 1,
+        z: Optional[torch.Tensor] = None,
+        return_logits: bool = False,
+        **kwargs
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor]]:
+        """
+        Samples and decodes n datums from the VAE latent space distribution.
+        Input:
+            n: number of points to sample.
+            z: optional specified latent space points to decode.
+            return_logits: whether to return the decoder logits in addition
+                to the sampled molecules. Default False.
+        Returns:
+            sample: sampled decoded designs.
+            logits: logits that are returned if `return_logits` is True.
+        """
+        model_state = self.training
+        self.eval()
+
+        if z is None:
+            z = torch.randn((n, self.latent_size))
+        else:
+            n = z.shape[0] if z.ndim > 1 else 1
+        logits = self.decode(z)
+        sample = torch.sigmoid(logits)
+
+        self.train(model_state)
+        if return_logits:
+            return sample, logits
+        return sample
 
 
 class IdentityVAE(nn.Module):
@@ -137,7 +176,7 @@ class IdentityVAE(nn.Module):
         """
         return self.encoder(X), None, None
 
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
+    def decode(self, z: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Reconstructs a tensor of point(s) from the VAE latent space into the
         flattened design space.
@@ -160,3 +199,14 @@ class IdentityVAE(nn.Module):
         """
         z, mu, logvar = self.encode(X.view(-1, X.size(dim=-1)))
         return self.decode(z), mu, logvar
+
+    @torch.no_grad()
+    def sample(self, z: torch.Tensor, **kwargs) -> torch.Tensor:
+        """
+        Samples and decodes n datums from the VAE latent space distribution.
+        Input:
+            z: optional specified latent space points to decode.
+        Returns:
+            sample: sampled decoded designs.
+        """
+        return self.decode(z)

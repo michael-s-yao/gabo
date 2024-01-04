@@ -62,8 +62,8 @@ class DesignBenchDataModule(pl.LightningDataModule):
             None.
         """
         self.train, self.val = self.task.dataset.split(val_fraction=0.1)
-        self.train = DesignBenchDataset(self.train)
-        self.val = DesignBenchDataset(self.val)
+        self.train = DesignBenchDataset(self.train, device=self.device)
+        self.val = DesignBenchDataset(self.val, device=self.device)
         return
 
     def train_dataloader(self) -> DataLoader:
@@ -78,8 +78,7 @@ class DesignBenchDataModule(pl.LightningDataModule):
             self.train,
             shuffle=True,
             batch_size=self.batch_size,
-            num_workers=self.num_workers,
-            generator=torch.Generator(device=self.device)
+            num_workers=self.num_workers
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -96,15 +95,20 @@ class DesignBenchDataModule(pl.LightningDataModule):
 
 
 class DesignBenchDataset(Dataset):
-    def __init__(self, data: Union[DiscreteDataset, ContinuousDataset]):
+    def __init__(
+        self,
+        data: Union[DiscreteDataset, ContinuousDataset],
+        device: torch.device = torch.device("cpu")
+    ):
         """
         Args:
             data: dataset containing design values x and associated objective
                 values y.
+            device: device. Default CPU.
         """
-        self.data = data
-        self.x = torch.from_numpy(data.x)
-        self.y = torch.from_numpy(data.y)
+        self.data, self.device = data, device
+        self.x = torch.from_numpy(data.x).to(self.device)
+        self.y = torch.from_numpy(data.y).to(self.device)
 
     def __len__(self) -> int:
         """

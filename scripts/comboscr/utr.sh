@@ -1,7 +1,7 @@
 #!/bin/bash
 
 METHOD="comboscr"
-TASK=$BRANIN_TASK
+TASK="UTR-ResNet-v0"
 DEVICE="cuda:0"
 
 run () {

@@ -24,12 +24,13 @@ class SequentialVAE(nn.Module):
     def __init__(
         self,
         in_dim: int,
-        vocab_size: int = 4,
+        vocab_size: int,
         hidden_size: int = 64,
         latent_size: int = 16,
         activation: str = "ReLU",
         kernel_size: int = 3,
-        num_layers: int = 4
+        num_layers: int = 4,
+        **kwargs
     ):
         """
         Args:
@@ -95,9 +96,9 @@ class SequentialVAE(nn.Module):
             mu: the multidimensional mean of the latent space point(s).
             logvar: the log of the variance of the latent space point(s).
         """
-        return self.encoder(seq)
+        return self.encoder(seq.to(torch.int32))
 
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
+    def decode(self, z: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Decodes latent space point(s) into sequence logits.
         Input:
@@ -111,23 +112,40 @@ class SequentialVAE(nn.Module):
 
     @torch.no_grad()
     def sample(
-        self, num: Optional[int] = 1, z: Optional[torch.Tensor] = None
+        self,
+        n: Optional[int] = 1,
+        z: Optional[torch.Tensor] = None,
+        differentiable: bool = False,
+        return_logits: bool = False
     ) -> torch.Tensor:
         """
-        Samples and decodes latent space point(s) into sequences.
+        Samples and decodes n datums from the VAE latent space distribution.
         Input:
-            num: number of sequences to sample. Default 1.
-            z: optional latent space point(s) to decode. If specified, the
-                num argument is ignored.
+            n: number of points to sample.
+            z: optional specified latent space points to decode.
+            differentiable: whether function outputs should be differentiable.
+            return_logits: whether to return the decoder logits in addition
+                to the sampled designs. Default False.
         Returns:
-            The decoded sequences of shape BN, where B is the batch size and
-            N is the sequence length.
+            sample: sampled decoded designs.
+            logits: logits that are returned if `return_logits` is True.
         """
+        model_state = self.training
+        self.eval()
+
         if z is None:
-            z = torch.randn((num, self.latent_size))
-        return torch.argmax(
-            torch.exp(F.log_softmax(self.decoder(z), dim=-1)), dim=-1
-        )
+            z = torch.randn((n, self.latent_size))
+        else:
+            n = z.shape[0] if z.ndim > 1 else 1
+        logits = self.decode(z)
+        sample = torch.exp(F.log_softmax(logits, dim=-1))
+
+        self.train(model_state)
+        if not differentiable:
+            sample = torch.argmax(sample, dim=-1)
+        if return_logits:
+            return sample, logits
+        return sample
 
 
 class SequentialVAEEncoder(nn.Module):

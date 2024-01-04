@@ -28,21 +28,21 @@ If you are running our codebase on a GPU, please also run the following commands
 python -m pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0+cu113 --extra-index-url https://download.pytorch.org/whl/cu113
 ```
 
-Finally, there is a minor versioning conflict between the installed dependences that requires one line in a package to be modified. More specifically, please navigate to the location of the installed `transformers` package:
+There is also a minor versioning conflict between the installed dependences that requires one line in a package to be modified. More specifically, please navigate to the location of the installed `transformers` package:
 
 ```
 cd /home/usr/miniconda3/envs/combo-scr/lib/python3.8/site-packages/transformers
 vim trainer_pt_utils.py
 ```
 
-In the `trainer_pt_utils.py` source code, file, please change the line `if version.parse(torch.__version__) <= version.parse("1.4.1"):` to `if version.parse(torch.__version__) <= version.parse("1.12.1"):`. Finally, please copy the [`smiles_vocab.txt`](./data/molecules/smiles_vocab.txt) file to the `design_bench_data` package directory:
+In the `trainer_pt_utils.py` source code, file, please change the line `if version.parse(torch.__version__) <= version.parse("1.4.1"):` to `if version.parse(torch.__version__) <= version.parse("1.12.1"):`. Next, please copy the [`smiles_vocab.txt`](./data/molecules/smiles_vocab.txt) file to the `design_bench_data` package directory:
 
 ```
 cd ~/OODOptimization
 cp -p data/molecules/smiles_vocab.txt /home/usr/miniconda3/envs/combo-scr/lib/python3.8/site-packages/design_bench_data/
 ```
 
-After successful setup, you can run our code as
+Similarly, please also follow the directions [here](https://github.com/rail-berkeley/design-bench/issues/1) to also download the `design-bench`-associated datasets as well if applicable. Finally, please initialize the submodules associated with the repository. After successful setup, you can run our code as
 
 ```
 python mbo/comboscr.py --help

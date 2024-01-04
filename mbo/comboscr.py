@@ -30,7 +30,6 @@ from mbo.args import build_args
 from data.data import DesignBenchDataModule
 from models.policy import COMBOSCRPolicy
 from models.joint import JointVAESurrogate
-from models.oracle.branin import BraninOracle
 from utils import get_device, seed_everything
 
 
@@ -71,8 +70,6 @@ def main():
         **hparams
     )
 
-    oracle = BraninOracle(negate=True)
-
     # Choose the initial set of observations.
     a, Wds = [], []
     sobol = torch.quasirandom.SobolEngine(
@@ -91,7 +88,8 @@ def main():
     y = (1.0 - alpha) * surrogate(z) - alpha * F.relu(
         policy.wasserstein(z_ref.detach(), z.detach()).unsqueeze(dim=-1)
     )
-    y_gt = torch.unsqueeze(oracle(z), dim=-1)
+    X = vae.sample(z=z).detach().cpu().numpy()
+    y_gt = torch.from_numpy(task.predict(X)).unsqueeze(dim=-1).to(device)
     y, y_gt = y.unsqueeze(dim=1), y_gt.unsqueeze(dim=1)
 
     for step in range(math.ceil(budget / batch_size) - 1):
@@ -111,7 +109,9 @@ def main():
                 dim=-1
             )
         )
-        new_gt = torch.unsqueeze(oracle(new_z), dim=-1)
+        new_X = vae.sample(z=new_z).detach().cpu().numpy()
+        new_gt = torch.from_numpy(task.predict(new_X)).unsqueeze(dim=-1)
+        new_gt = new_gt.to(device)
         new_y, new_gt = new_y.unsqueeze(dim=1), new_gt.unsqueeze(dim=1)
 
         # Update training points.
@@ -129,10 +129,11 @@ def main():
     # Save optimization results.
     if args.logging_dir is not None:
         os.makedirs(args.logging_dir, exist_ok=True)
-        z = z.reshape(y.size(dim=0), y.size(dim=1), z.size(dim=-1))
+        X = vae.sample(z=z)
+        X = X.reshape(y.size(dim=0), y.size(dim=1), X.size(dim=-1))
         np.save(
             os.path.join(args.logging_dir, "solution.npy"),
-            z.detach().cpu().numpy()
+            X.detach().cpu().numpy()
         )
         np.save(
             os.path.join(args.logging_dir, "predictions.npy"),

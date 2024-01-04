@@ -1,7 +1,7 @@
 #!/bin/bash
 
 METHOD="comboscr"
-TASK=$BRANIN_TASK
+TASK="TFBind8-Exact-v0"
 DEVICE="cuda:0"
 
 run () {

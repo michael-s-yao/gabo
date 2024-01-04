@@ -64,7 +64,11 @@ class JointVAESurrogate(pl.LightningModule):
                 **kwargs
             )
         elif self.task.is_discrete:
-            self.vae = SequentialVAE(in_dim=self.task.input_shape[0], **kwargs)
+            self.vae = SequentialVAE(
+                in_dim=self.task.input_shape[0],
+                vocab_size=self.task.dataset.num_classes,
+                **kwargs
+            )
         else:
             self.vae = VAE(in_dim=self.task.input_shape[0], **kwargs)
 
@@ -86,12 +90,15 @@ class JointVAESurrogate(pl.LightningModule):
         Returns:
             z: the latent space representation(s) of the input(s).
             y: the predicted objective scores from the surrogate model.
-            recon: the log softmax of the logits of the reconstructed sequence.
+            logits: the logits of the reconstructed sequence.
             mu: the mean tensor of shape Bx(self.vae.latent_size).
             logvar: the log variance tensor of shape Bx(self.vae.latent_size).
         """
         z, mu, logvar = self.vae.encode(X)
-        return z, self.surrogate(z), self.vae.decode(z), mu, logvar
+        logits = self.vae.decode(z, tokens=X)
+        if z.ndim > X.ndim:
+            z = z.reshape(z.size(dim=0), -1) if X.ndim > 1 else z.flatten()
+        return z, self.surrogate(z), logits, mu, logvar
 
     def training_step(
         self, batch: Tuple[torch.Tensor], batch_idx: int
@@ -104,41 +111,18 @@ class JointVAESurrogate(pl.LightningModule):
         Returns:
             The loss over the input training batch.
         """
-        if self.hparams.task_name == os.environ["MOLECULE_TASK"]:
-            outputs = {
-                key: (val.detach() if key != "loss" else val)
-                for key, val in self.model(batch).items()
-            }
-            for key, val in outputs.items():
-                is_loss = key == "loss"
-                if not is_loss:
-                    self.log(
-                        key,
-                        val,
-                        on_step=(not is_loss),
-                        on_epoch=is_loss,
-                        prog_bar=(not is_loss),
-                        logger=is_loss
-                    )
-                self.log(
-                    f"train/{key}",
-                    val,
-                    on_step=is_loss,
-                    on_epoch=(not is_loss),
-                    prog_bar=is_loss,
-                    logger=(not is_loss)
-                )
-            return outputs["loss"]
-
         X, y = batch
         X, y = X.to(self.dtype), y.to(self.dtype)
         z, ypred, logits, mu, logvar = self(X)
-        ce, kld = self.recon_loss(logits, X), self.kld(mu, logvar)
+        if self.hparams.task_name == os.environ["MNIST_TASK"]:
+            recon = torch.sigmoid(logits)
+        else:
+            recon = logits
+        ce, kld = self.recon_loss(recon, X), self.kld(mu, logvar)
         mse = self.obj_loss(y, ypred)
         train_loss = ce + (self.hparams.alpha * kld) + (
             self.hparams.beta * mse
         )
-        self.log("train_loss", train_loss, sync_dist=True, prog_bar=True)
         return train_loss
 
     def validation_step(
@@ -152,24 +136,11 @@ class JointVAESurrogate(pl.LightningModule):
         Returns:
             A dictionary containing the validation step results.
         """
-        if self.hparams.task_name == os.environ["MOLECULE_TASK"]:
-            outputs = self.model(batch)
-            for key, val in outputs.items():
-                self.log(
-                    f"val/{key}",
-                    val,
-                    on_step=False,
-                    on_epoch=True,
-                    prog_bar=False,
-                    logger=True,
-                    sync_dist=True
-                )
-            return outputs
-
         X, y = batch
         X, y = X.to(self.dtype), y.to(self.dtype)
         z, ypred, logits, mu, logvar = self(X)
-        ce, kld = self.recon_loss(logits, X), self.kld(mu, logvar)
+        recon = logits if self.task.is_discrete else torch.sigmoid(logits)
+        ce, kld = self.recon_loss(recon, X), self.kld(mu, logvar)
         mse = self.obj_loss(y, ypred)
         val_loss = ce + (self.hparams.alpha * kld) + (self.hparams.beta * mse)
         self.log("val/ce", ce, sync_dist=True, prog_bar=True)
@@ -232,7 +203,7 @@ class JointVAESurrogate(pl.LightningModule):
         """
         Computes the reconstruction loss term of the ELBO loss.
         Input:
-            logits: reconstruction for continuous tasks or logits of the
+            recon: probabilities for continuous tasks or logits of the
                 reconstructed sequence for discrete tasks.
             X: the original input batch of designs.
         Returns:
@@ -243,7 +214,7 @@ class JointVAESurrogate(pl.LightningModule):
         if self.task.is_discrete:
             return F.cross_entropy(
                 recon.reshape(-1, self.vae.vocab_size),
-                X.reshape(-1).to(torch.int64)
+                X.flatten().to(torch.int64)
             )
         else:
             return F.binary_cross_entropy(recon, X.view(recon.size()))

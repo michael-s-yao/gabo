@@ -5,6 +5,9 @@ Author(s):
     Yimeng Zeng @yimeng-zeng
     Michael Yao @michael-s-yao
 
+Adapted from the Mol-OOD repository from @yimeng-zeng at
+https://github.com/Yimeng-Zeng/Mol-OOD/molformers/models/PaperVAE.py
+
 Citation(s):
     [1] Maus NT, Jones HT, Moore JS, Kusner MJ, Bradshaw J, Gardner JR.
         Local latent space Bayesian optimization over structured inputs.
@@ -12,17 +15,12 @@ Citation(s):
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
-import os
 import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
-import pytorch_lightning as pl
 from collections import namedtuple
-from data.molecules.selfies import SELFIESDataModule, SELFIESDataset
-from pytorch_lightning.callbacks import ModelCheckpoint, RichProgressBar
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 sys.path.append(".")
 from models.pe import PositionalEncoding
@@ -81,7 +79,9 @@ class InfoTransformerVAE(nn.Module):
         self.hparams = locals()
         self.save_hyperparameters()
         self.vocab_size = len(self.hparams.vocab2idx.keys())
-        self.latent_size = self.hparams.model_dim
+        self.latent_size = (
+            self.hparams.model_dim * self.hparams.bottleneck_size
+        )
 
         self.encoder_embedding_dim = 2 * self.hparams.model_dim
 
@@ -184,24 +184,32 @@ class InfoTransformerVAE(nn.Module):
             tokens: an input tensor of tokens.
             as_probs: whether the input tensor of tokens are probabilities.
         Returns:
-            The mean and standard deviation of the encoded tokens in the VAE
-            latent space.
+            z: the latent space representation(s) of the input(s).
+            mu: the multidimensional mean of the latent space point(s).
+            sigma: the standard deviation of the latent space point(s).
         """
+        tokens = tokens.to(torch.int32)
         if as_probs:
             embed = tokens @ self.encoder_token_embedding.weight
         else:
             embed = self.encoder_token_embedding(tokens)
         embed = self.encoder_position_encoding(embed)
         pad_mask = self.generate_pad_mask(tokens)
-        print(embed.size())
-        encoding = self.encoder(embed, src_key_padding_mask=pad_mask)
+        encoding = self.encoder(
+            embed.permute(1, 0, 2), src_key_padding_mask=pad_mask
+        )
+        encoding = encoding.permute(1, 0, 2)
         mu = encoding[..., :self.hparams.model_dim]
         sigma = self.hparams.min_posterior_std + F.softplus(
             encoding[..., self.hparams.model_dim:]
         )
         mu = mu[:, :self.hparams.bottleneck_size, :]
         sigma = sigma[:, :self.hparams.bottleneck_size, :]
-        return mu, sigma
+        if self.hparams.is_autoencoder:
+            z = mu
+        else:
+            z = self.sample_posterior(mu, sigma)
+        return z, mu, sigma
 
     def decode(
         self, z: torch.Tensor, tokens: torch.Tensor, as_probs: bool = False
@@ -214,6 +222,7 @@ class InfoTransformerVAE(nn.Module):
         Returns:
             The decoded logits corresponding to molecule token representations.
         """
+        tokens = tokens.to(torch.int32)
         if as_probs:
             embed = tokens[:, :-1] @ self.decoder_token_embedding.weight
         else:
@@ -224,7 +233,7 @@ class InfoTransformerVAE(nn.Module):
                 torch.full(
                     (embed.shape[0], 1, embed.shape[-1]),
                     fill_value=self.hparams.vocab2idx[self.hparams.start],
-                    device=self.device
+                    device=embed.device
                 ),
                 embed
             ],
@@ -234,16 +243,17 @@ class InfoTransformerVAE(nn.Module):
 
         # TODO: Mask out all stop tokens but the first?
         tgt_mask = nn.Transformer.generate_square_subsequent_mask(
-            embed.shape[1]
+            embed.size(dim=1)
         )
+        tgt_mask = tgt_mask.to(device=embed.device, dtype=torch.bool)
         decoding = self.decoder(
-            tgt=embed, memory=z, tgt_mask=tgt_mask.to(
-                device=self.device, dtype=torch.bool
-            )
+            tgt=embed.permute(1, 0, 2),
+            memory=z.permute(1, 0, 2),
+            tgt_mask=tgt_mask
         )
         logits = decoding @ self.decoder_token_unembedding
 
-        return logits
+        return logits.permute(1, 0, 2)
 
     @torch.no_grad()
     def sample(
@@ -313,43 +323,25 @@ class InfoTransformerVAE(nn.Module):
             return sample, logits
         return sample
 
-    def forward(self, tokens: torch.Tensor) -> Dict[str, Any]:
+    def forward(self, tokens: torch.Tensor) -> Tuple[torch.Tensor]:
         """
         Forward propagation through the transformer VAE.
         Input:
             tokens: an input batch of tokens.
         Returns:
-            A dictionary contining the molecule reconstruction results.
+            logits: the reconstructed sequence logits of shape (B)NC, where B
+                is the batch size, N is the sequence length, and C is the
+                number of classes.
+            mu: the multidimensional mean of the latent space point(s) of shape
+                (B)bD, where B is the batch size, b is the bottleneck size, and
+                D is the model latent dimension.
+            logvar: the log of the variance of the latent space point(s) of
+                shape (B)bD, where B is the batch size, b is the bottleneck
+                size, and D is the model latent dimension.
         """
-        mu, sigma = self.encode(tokens)
-        if self.hparams.is_autoencoder:
-            z = mu
-        else:
-            z = self.sample_posterior(mu, sigma)
+        z, mu, sigma = self.encode(tokens)
         logits = self.decode(z, tokens)
-        recon_loss = torch.mean(
-            F.cross_entropy(logits.permute(0, 2, 1), tokens, reduction="none")
-        )
-        sigma2 = sigma.pow(2)
-        kldiv = torch.mean(0.5 * (mu.pow(2) + sigma2 - sigma2.log() - 1))
-        loss = recon_loss.clone()
-        if self.hparams.kl_factor != 0:
-            loss = loss + (self.hparams.kl_factor * kldiv)
-        loss = loss
-        return {
-            "loss": loss,
-            "z": z,
-            "recon_loss": recon_loss,
-            "kldiv": kldiv,
-            "recon_token_acc": torch.mean(
-                (logits.argmax(dim=-1) == tokens.float()).to(torch.float)
-            ),
-            "recon_string_acc": torch.mean(
-                torch.all(logits.argmax(dim=-1) == tokens, dim=1).float(),
-                dim=0
-            ),
-            "sigma_mean": torch.mean(sigma),
-        }
+        return logits, mu, torch.log(torch.square(sigma))
 
     def save_hyperparameters(self) -> None:
         """
@@ -418,245 +410,3 @@ class InfoTransformerVAE(nn.Module):
             ret = y_soft
 
         return ret, randoms if return_randoms else ret
-
-
-class VAEModule(pl.LightningModule):
-    def __init__(
-        self,
-        dataset: SELFIESDataset,
-        bottleneck_size: int = 2,
-        model_dim: int = 128,
-        is_autoencoder: bool = False,
-        kl_factor: float = 0.1,
-        min_posterior_std: float = 1e-4,
-        encoder_nhead: int = 8,
-        encoder_dim_feedforward: int = 512,
-        encoder_dropout: float = 0.1,
-        encoder_num_layers: int = 6,
-        encoder_lr: float = 1e-3,
-        encoder_warmup_steps: int = 100,
-        aggressive_steps: int = 5,
-        decoder_nhead: int = 8,
-        decoder_dim_feedforward: int = 256,
-        decoder_dropout: float = 0.1,
-        decoder_num_layers: int = 6,
-        decoder_lr: float = 1e-3,
-        decoder_warmup_steps: int = 100,
-        num_sample_per_epoch: int = 100
-    ):
-        """
-        Args:
-            dataset: dataset to use for model training.
-            bottleneck_size: size of the model bottleneck. Default 2.
-            model_dim: model dimensions. Default 128.
-            is_autoencoder: whether to treat the VAE model as an autoencoder.
-            kl_factor: relative weighting of the KL Divergence term in the loss
-                function.
-            min_posterior_std: minimum value for the standard deviation of the
-                posterior distribution.
-            encoder_nhead: number of encoder attention heads. Default 8.
-            encoder_dim_feedforward: number of feedforward dimensions for the
-                encoder. Default 512.
-            encoder_dropout: encoder dropout probability. Default 0.1.
-            encoder_num_layers: number of layers for the encoder. Default 6.
-            encoder_lr: learning rate for the encoder. Default 0.001.
-            encoder_warmup_steps: number of warmup steps for the encoder.
-                Default 100.
-            aggressive_steps: number of aggressive training steps. Default 5.
-            decoder_nhead: number of decoder attention heads. Default 8.
-            decoder_dim_feedforward: number of feedforward dimensions for the
-                decoder. Default 256.
-            decoder_dropout: decoder dropout probability. Default 0.1.
-            decoder_num_layers: number of layers for the decoder. Default 6.
-            decoder_lr: learning rate for the decoder. Default 0.001.
-            decoder_warmup_steps: number of warmup steps for the decoder.
-                Default 100.
-            num_sample_per_epoch: number of sample molecules to generate at the
-                end of each training epoch. Default 100.
-        """
-        super().__init__()
-        self.save_hyperparameters(ignore="dataset")
-        self.model = InfoTransformerVAE(dataset=dataset, **self.hparams)
-
-    def training_step(
-        self, batch: torch.Tensor, batch_idx: int
-    ) -> Dict[str, Any]:
-        """
-        Implements the training step.
-        Input:
-            batch: batch of input molecule representations.
-            batch_idx: index of the batch in the dataset.
-        Returns:
-            A dictionary of the computed result values.
-        """
-        outputs = {
-            key: (val.detach() if key != "loss" else val)
-            for key, val in self.model(batch).items()
-        }
-        for key, val in outputs.items():
-            is_loss = key == "loss"
-            if not is_loss:
-                self.log(
-                    key,
-                    val,
-                    on_step=(not is_loss),
-                    on_epoch=is_loss,
-                    prog_bar=(not is_loss),
-                    logger=is_loss
-                )
-            self.log(
-                f"train/{key}",
-                val,
-                on_step=is_loss,
-                on_epoch=(not is_loss),
-                prog_bar=is_loss,
-                logger=(not is_loss)
-            )
-        return outputs
-
-    def validation_step(self, batch, batch_idx):
-        """
-        Implements the validation step.
-        Input:
-            batch: batch of input molecule representations.
-            batch_idx: index of the batch in the dataset.
-        Returns:
-            A dictionary of the computed result values.
-        """
-        outputs = self.model(batch)
-        for key, val in outputs.items():
-            self.log(
-                f"val/{key}",
-                val,
-                on_step=False,
-                on_epoch=True,
-                prog_bar=False,
-                logger=True,
-                sync_dist=True
-            )
-
-    def on_train_epoch_end(self) -> None:
-        """
-        Samples from the latent space at the end of every training epoch.
-        Input:
-            None.
-        Returns:
-            None.
-        """
-        if self.trainer.is_global_zero:
-            with torch.no_grad():
-                samples = self.model.sample(self.hparams.num_sample_per_epoch)
-                samples = list(map(self.model.dataset.decode, samples))
-
-            with open(
-                os.path.join(
-                    self.trainer.logger.log_dir,
-                    f"samples-epoch={self.current_epoch}.txt"
-                ),
-                "wt"
-            ) as f:
-                _ = [print(sample, file=f) for sample in samples]
-        return
-
-    def configure_optimizers(self) -> Dict[str, Any]:
-        """
-        Configure optimizers and LR schedulers.
-        Input:
-            None.
-        Returns:
-            A dictionary with the relevant optimizer and LR scheduler.
-        """
-        encoder_params, decoder_params = [], []
-        for name, param in self.named_parameters():
-            if param.requires_grad:
-                if "encoder" in name:
-                    encoder_params.append(param)
-                elif "decoder" in name:
-                    decoder_params.append(param)
-                else:
-                    raise ValueError(f"Unknown parameter {name}")
-
-        optimizer = optim.Adam([
-            {
-                "params": encoder_params,
-                "lr": self.hparams.encoder_lr
-            },
-            {
-                "params": decoder_params,
-                "lr": self.hparams.decoder_lr
-            }
-        ])
-        lr_scheduler = optim.lr_scheduler.LambdaLR(
-            optimizer, [self._encoder_lr_sched, self._decoder_lr_sched]
-        )
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": lr_scheduler,
-                "interval": "step",
-                "frequency": 1
-            }
-        }
-
-    def _encoder_lr_sched(self, step: int) -> float:
-        """
-        Simple linear warmup LR scheduler for the encoder.
-        Input:
-            step: optimization step.
-        Returns:
-            LR weighting factor for the encoder.
-        """
-        return min(step / self.hparams.encoder_warmup_steps, 1.0)
-
-    def _decoder_lr_sched(self, step: int) -> float:
-        """
-        Decoder LR scheduler.
-        Input:
-            step: optimization step.
-        Returns:
-            LR weighting factor for the decoder.
-        """
-        if step < self.hparams.encoder_warmup_steps or (
-            (step - self.hparams.encoder_warmup_steps + 1) %
-            self.hparams.aggressive_steps != 0
-        ):
-            return 0.0
-        return min(
-            (step - self.hparams.encoder_warmup_steps) / (
-                self.hparams.decoder_warmup_steps *
-                self.hparams.aggressive_steps
-            ),
-            1.0
-        )
-
-
-def fit() -> None:
-    """
-    Trains a transformer VAE on the SELFIES molecule dataset.
-    Input:
-        None.
-    Returns:
-        None.
-    """
-    datamodule = SELFIESDataModule()
-    checkpath = None
-    model = VAEModule(dataset=datamodule.train)
-    logger = pl.loggers.TensorBoardLogger(
-        save_dir="lightning_logs", name=type(model).__name__ + "_enc_masked"
-    )
-    check = ModelCheckpoint(
-        every_n_epochs=10,
-        save_top_k=-1,
-        save_last=True
-    )
-    trainer = pl.Trainer(
-        gpus=-1,
-        strategy=pl.plugins.DDPPlugin(find_unused_parameters=False),
-        logger=logger,
-        callbacks=[check, RichProgressBar()],
-        gradient_clip_val=1.0,
-        gradient_clip_algorithm="norm",
-        detect_anomaly=True,
-        max_epochs=1_000,
-    )
-    trainer.fit(model, datamodule=datamodule, ckpt_path=checkpath)
