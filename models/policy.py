@@ -188,6 +188,9 @@ class COMBOSCRPolicy:
         num_steps = 0
         cache, Wd = [-1e12] * self.hparams.patience, 0.0
 
+        z = z.flatten(start_dim=1)
+        z_ref = z_ref.flatten(start_dim=1)
+
         def generator():
             while not np.isclose(Wd, min(cache), rtol=1e-3) or Wd < min(cache):
                 yield

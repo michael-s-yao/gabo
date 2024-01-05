@@ -2,7 +2,7 @@
 
 METHOD="comboscr"
 TASK=$MNIST_TASK
-DEVICE="cuda:1"
+DEVICE="cuda:0"
 
 run () {
   if [ -z "$1" ]
