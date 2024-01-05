@@ -136,10 +136,9 @@ class InfoTransformerVAE(nn.Module):
         Returns:
             A tensor of n datums from the prior distribution.
         """
-        prior = torch.randn(
+        return torch.randn(
             n, self.hparams.bottleneck_size, self.hparams.model_dim
         )
-        return prior.to(self.device)
 
     def sample_posterior(
         self, mu: torch.Tensor, sigma: torch.Tensor, n: Optional[int] = None
@@ -281,30 +280,35 @@ class InfoTransformerVAE(nn.Module):
         if z is None:
             z = self.sample_prior(n)
         else:
-            n = z.shape[0]
+            n = z.size(dim=0)
+        z = z.reshape(-1, self.hparams.bottleneck_size, self.hparams.model_dim)
+        z = z.permute(1, 0, 2)
 
         tokens = torch.full(
             (n, 1),
             fill_value=self.hparams.vocab2idx[self.hparams.start],
             dtype=torch.long,
-            device=self.device
+            device=z.device
         )
         for _ in range(self.hparams.max_string_length):
             tgt = self.decoder_token_embedding(tokens)
             tgt = self.decoder_position_encoding(tgt)
             tgt_mask = nn.Transformer.generate_square_subsequent_mask(
-                tokens.shape[-1]
+                tokens.size(dim=-1)
             )
-            tgt_mask = tgt_mask.to(dtype=torch.bool, device=self.device)
+            tgt_mask = tgt_mask.to(dtype=torch.bool, device=z.device)
 
-            decoding = self.decoder(tgt=tgt, memory=z, tgt_mask=tgt_mask)
+            decoding = self.decoder(
+                tgt=tgt.permute(1, 0, 2), memory=z, tgt_mask=tgt_mask
+            )
             logits = decoding @ self.decoder_token_unembedding
             sample, randoms = self.gumbel_softmax(
                 logits, dim=-1, hard=True, return_randoms=True
             )
 
             tokens = torch.cat(
-                [tokens, sample[:, -1, :].argmax(dim=-1)[:, None]], dim=-1
+                [tokens, sample[-1, :, :].argmax(dim=-1).unsqueeze(dim=-1)],
+                dim=-1
             )
 
             # Check if all molecules have a stop token in them.
