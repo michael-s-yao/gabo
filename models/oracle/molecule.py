@@ -12,7 +12,7 @@ Citation(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import networkx as nx
-import sascorer
+import models.oracle.sascorer as sascorer
 from rdkit import Chem
 from rdkit.Chem import Crippen
 from rdkit.Chem import rdmolops

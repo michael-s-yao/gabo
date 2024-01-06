@@ -17,7 +17,7 @@ import pandas as pd
 from typing import Any, Dict, Union
 
 
-class WarfarinDose:
+class WarfarinDosingOracle:
     """
     Warfarin weekly dose estimator using one of the linear regression models
     reported by IWPC. (NEJM 2009).

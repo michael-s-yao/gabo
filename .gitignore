@@ -123,6 +123,7 @@ warfarin/data/*.xls
 data/molecules/*.gz
 data/molecules/*.pkl
 data/molecules/*.csv
+data/warfarin/*.xls
 
 db-results/
 *.out
