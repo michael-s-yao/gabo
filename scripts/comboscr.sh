@@ -1,7 +1,7 @@
 #!/bin/bash
 
 METHOD="comboscr"
-TASK=$BRANIN_TASK
+TASK=$1
 DEVICE="cuda:0"
 
 run () {
@@ -23,6 +23,7 @@ run () {
 
 main () {
   run
+  # Run ablation experiments with constant values of alpha.
   for CONSTANT in 0.0 0.2 0.5 0.8 1.0; do
     run $CONSTANT
   done

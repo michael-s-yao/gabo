@@ -28,20 +28,18 @@ torch.set_default_dtype(torch.float64)
 transformers.logging.set_verbosity_error()
 warnings.filterwarnings("ignore", category=FutureWarning)
 import design_bench
+import data
 from design_bench.datasets.continuous_dataset import ContinuousDataset
 from design_bench.datasets.discrete_dataset import DiscreteDataset
-from data.data import (
-    BraninDataset, MNISTIntensityDataset, PenalizedLogPDataset
-)
 from models.oracle.branin import BraninOracle
 from models.oracle.mnist import MNISTOracle
 from models.oracle.molecule import MoleculeOracle
 
 
 TASK_DATASETS = {
-    os.environ["BRANIN_TASK"]: BraninDataset,
-    os.environ["MNIST_TASK"]: MNISTIntensityDataset,
-    os.environ["MOLECULE_TASK"]: PenalizedLogPDataset,
+    os.environ["BRANIN_TASK"]: data.BraninDataset,
+    os.environ["MNIST_TASK"]: data.MNISTIntensityDataset,
+    os.environ["MOLECULE_TASK"]: data.PenalizedLogPDataset,
 }
 
 

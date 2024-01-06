@@ -1,10 +1,9 @@
-[submodule "MolOOD"]
-	path = MolOOD
-	url = https://github.com/Yimeng-Zeng/Mol-OOD.git
-	branch = surrogate
 [submodule "design-baselines"]
 	path = design-baselines
 	url = https://github.com/brandontrabucco/design-baselines.git
 [submodule "bonet"]
 	path = bonet
 	url = https://github.com/siddarthk97/bonet.git
+[submodule "ddom"]
+	path = ddom
+	url = https://github.com/siddarthk97/ddom.git

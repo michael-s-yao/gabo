@@ -25,9 +25,9 @@ from typing import Union
 
 sys.path.append(".")
 import mbo  # noqa
+import data
 import design_bench
 from mbo.args import build_args
-from data.data import DesignBenchDataModule
 from models.policy import COMBOSCRPolicy
 from models.joint import JointVAESurrogate
 from utils import get_device, seed_everything
@@ -203,7 +203,7 @@ def fit_vae_and_surrogate_models(
     Returns:
         None.
     """
-    dm = DesignBenchDataModule(task=task, device=device)
+    dm = data.DesignBenchDataModule(task=task, device=device)
     model = JointVAESurrogate(task=task, task_name=task_name, lr=lr, **kwargs)
     devices = "".join(filter(str.isdigit, device))
     devices = [int(devices)] if len(devices) > 0 else "auto"
