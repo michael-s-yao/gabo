@@ -12,7 +12,7 @@ run () {
     ALPHA="--alpha $1"
   fi
   for SEED in 42 43 44 45 46; do
-    python mbo/$METHOD.py \
+    python mbo/run_$METHOD.py \
       --task $TASK \
       --logging-dir db-results/$METHOD-$TASK-$1-$SEED \
       --seed $SEED \

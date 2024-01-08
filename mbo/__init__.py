@@ -31,9 +31,7 @@ import design_bench
 import data
 from design_bench.datasets.continuous_dataset import ContinuousDataset
 from design_bench.datasets.discrete_dataset import DiscreteDataset
-from models.oracle.branin import BraninOracle
-from models.oracle.mnist import MNISTOracle
-from models.oracle.molecule import MoleculeOracle
+from models.oracle import BraninOracle, MNISTOracle, MoleculeOracle
 
 
 TASK_DATASETS = {

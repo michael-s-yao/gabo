@@ -10,38 +10,22 @@ https://github.com/gianlucatruda/warfit-learn/tree/master
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
 import json
-from math import isclose
 import numpy as np
 import os
 import pandas as pd
 from pathlib import Path
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
-from typing import Optional, Sequence, Tuple, Union
+from typing import Sequence, Union
 
 
 class WarfarinDataset:
-    def __init__(
-        self,
-        root: Union[Path, str] = "./data/warfarin",
-        train_test_split: Tuple[float] = (0.8, 0.2),
-        seed: int = 42
-    ):
+    def __init__(self, root: Union[Path, str] = "./data/warfarin"):
         """
         Args:
             root: directory path. Default `./warfarin/data`.
-            train_test_split: fraction of data to be allocated for each
-                of the training and test splits, respectively.
-            seed: random seed. Default 42.
         """
         self.root = root
-        self.train_frac, self.test_frac = train_test_split
-        if not isclose(self.train_frac + self.test_frac, 1.0, abs_tol=1e-6):
-            raise ValueError(
-                f"Train and test splits must sum to 1, got {train_test_split}."
-            )
-        self.seed = seed
-        self.rng = np.random.RandomState(seed=self.seed)
 
         self.height = "Height (cm)"
         self.weight = "Weight (kg)"
@@ -66,43 +50,17 @@ class WarfarinDataset:
             self.dataset = pd.read_excel(xls, "Subject Data")[self.columns]
 
         self._prune()
+        self._impute_heights_and_weights()
+        self.dataset = self.dataset.fillna(0)
 
-        self.num_samples, _ = self.dataset.shape
-        self.rows = np.arange(self.num_samples, dtype=int)
-        self.rng.shuffle(self.rows)
-
-        self.setup()
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        """
-        Split dataset into train, val, and test partitions. Of the training
-        dataset, we allocate 12.5% for validation. By default, this results
-        in a 70% training, 10% validation, and 20% test split of the entire
-        dataset.
-        Input:
-            stage: setup stage. One of [`fit`, `test`, None]. Default None.
-        Returns:
-            None.
-        """
-        self.num_train = round(self.train_frac * self.num_samples)
-        self.num_test = self.num_samples - self.num_train
-
-        self.train = np.array(self.rows[:self.num_train])
-        self.test = np.array(self.rows[self.num_train:])
-
-        self.train = self.dataset.iloc[self.train]
-        self.train, model_h, model_w = self._impute_heights_and_weights(
-            self.train, None, None
+        self.patients = self.dataset.drop(
+            [self.inr, self.target_inr, self.did_reach_stable_dose], axis=1
         )
-        self.train = self.train.fillna(0)
+        self.doses = self.dataset[self.dose]
 
-        self.test = self.dataset.iloc[self.test]
-        self.test, _, _ = self._impute_heights_and_weights(
-            self.test, model_h, model_w
+        self.transform = StandardizeTransform(
+            self.dataset, self.height, self.weight, self.dose
         )
-        self.test = self.test.fillna(0)
-
-        return
 
     def _prune(self) -> None:
         """
@@ -167,99 +125,48 @@ class WarfarinDataset:
             self.dataset, columns=[self.CYP2C9, self.VKORC1]
         )
 
-    @property
-    def train_dataset(self) -> Tuple[pd.DataFrame, pd.Series]:
-        """
-        Returns the training dataset.
-        Input:
-            None.
-        Returns:
-            X: a DataFrame of the input training data.
-            y: the target warfarin dose for the training dataset patients.
-        """
-        return (
-            self.train.drop(
-                [self.inr, self.target_inr, self.did_reach_stable_dose],
-                axis=1
-            ),
-            self.train[self.dose]
-        )
-
-    @property
-    def test_dataset(self) -> Tuple[pd.DataFrame, pd.Series]:
-        """
-        Returns the test dataset.
-        Input:
-            None.
-        Returns:
-            X: a DataFrame of the input test data.
-            y: the target warfarin dose for the test dataset patients.
-        """
-        return (
-            self.test.drop(
-                [self.inr, self.target_inr, self.did_reach_stable_dose],
-                axis=1
-            ),
-            self.test[self.dose]
-        )
-
-    def _impute_heights_and_weights(
-        self,
-        data: pd.DataFrame,
-        model_h: Optional[LinearRegression] = None,
-        model_w: Optional[LinearRegression] = None
-    ) -> Tuple[pd.DataFrame, LinearRegression, LinearRegression]:
+    def _impute_heights_and_weights(self) -> None:
         """
         Impute missing height values using weight, race, and sex. Impute
         missing weight values using height, race, and sex. Both imputations
         are performed using linear regression.
         Input:
-            data: model to fit the data to.
-            model_h: optional fitted linear regression model to use for height
-                imputation.
-            model_w: optional fitted linear regression model to use for weight
-                imputation.
+            None.
         Returns:
-            data: model with imputed height and weight values.
-            model_h: fitted linear regression model used for height imputation.
-            model_w: fitted linear regression model used for weight imputation.
+            None.
         """
-        train = data[
-            (data[self.height].isnull() == False) & (
-                data[self.weight].isnull() == False
+        train = self.dataset[
+            (self.dataset[self.height].isnull() == False) & (
+                self.dataset[self.weight].isnull() == False
             )
         ]
 
-        pred_h = data[data[self.height].isnull()]
+        pred_h = self.dataset[self.dataset[self.height].isnull()]
         pred_h = pred_h.drop(self.height, axis=1)
         pred_h = pred_h[[self.weight] + self.races + [self.gender]]
-        if model_h is None:
-            X_h, y_h = train.drop(self.height, axis=1), train[self.height]
-            X_h = X_h[[self.weight] + self.races + [self.gender]]
-            model_h = LinearRegression()
-            model_h.fit(X_h, y_h)
+        X_h, y_h = train.drop(self.height, axis=1), train[self.height]
+        X_h = X_h[[self.weight] + self.races + [self.gender]]
+        model_h = LinearRegression()
+        model_h.fit(X_h, y_h)
 
-        pred_w = data[data[self.weight].isnull()]
+        pred_w = self.dataset[self.dataset[self.weight].isnull()]
         pred_w = pred_w.drop(self.weight, axis=1)
         pred_w = pred_w[[self.height] + self.races + [self.gender]]
-        if model_w is None:
-            X_w, y_w = train.drop(self.weight, axis=1), train[self.weight]
-            X_w = X_w[[self.height] + self.races + [self.gender]]
-            model_w = LinearRegression()
-            model_w.fit(X_w, y_w)
+        X_w, y_w = train.drop(self.weight, axis=1), train[self.weight]
+        X_w = X_w[[self.height] + self.races + [self.gender]]
+        model_w = LinearRegression()
+        model_w.fit(X_w, y_w)
 
-        data.loc[data[self.height].isnull(), self.height] = (
+        self.dataset.loc[self.dataset[self.height].isnull(), self.height] = (
             model_h.predict(pred_h)
         )
-        data.loc[data[self.weight].isnull(), self.weight] = (
+        self.dataset.loc[self.dataset[self.weight].isnull(), self.weight] = (
             model_w.predict(pred_w)
         )
 
-        return data, model_h, model_w
+        return
 
-    def _impute_target_INR(
-        self, consensus_target_inr: float = 2.5
-    ) -> None:
+    def _impute_target_INR(self, consensus_target_inr: float = 2.5) -> None:
         """
         Impute target INRs using the mean of a range if an INR range is given,
         and using the consensus INR target if no information is given.
@@ -371,110 +278,68 @@ class WarfarinDataset:
         ]
 
 
-class PowerNormalizeTransform:
-    """Transforms a vector using a power law followed by normalization."""
-
-    def __init__(
-        self,
-        X: Union[pd.DataFrame, pd.Series, np.ndarray],
-        p: Union[float, int] = 1,
-        key: str = "Therapeutic Dose of Warfarin"
-    ):
+class StandardizeTransform:
+    def __init__(self, X: pd.DataFrame, *args):
         """
         Args:
-            X: a vector to fit the transform to.
-            p: power to raise X's elements to prior to fitting the transform.
-            key: column to transform. Must be provided if X is a DataFrame.
+            X: an input DataFrame of patient data.
+            args: the column names to standardize.
         """
-        self.scaler = StandardScaler()
-        self.p = p
-        self.key = key
-        self.z_atol = 10.0
-        if isinstance(X, pd.DataFrame):
-            X = X[self.key].to_numpy()
-        elif isinstance(X, pd.Series):
-            X = X.to_numpy()
-        X = np.squeeze(X)
-        self.scaler = self.scaler.fit(np.power(X, self.p)[:, np.newaxis])
+        self.args = args
+        self.transforms = {
+            col: StandardScaler().fit(X.loc[:, col].to_numpy().reshape(-1, 1))
+            for col in self.args
+        }
 
-    def __call__(
-        self, X: Union[pd.DataFrame, pd.Series, np.ndarray]
-    ) -> Union[pd.DataFrame, np.ndarray]:
+    def standardize(
+        self, X: Union[pd.DataFrame, pd.Series]
+    ) -> Union[pd.DataFrame, pd.Series]:
         """
-        Normalizes a vector of raw values using the fitted transform.
+        Standardizes the specified columns in the input DataFrame or Series.
         Input:
-            X: a vector of raw values.
+            X: the DataFrame or Series of data to standardize.
         Returns:
-            A vector of the normalized values.
+            The DataFrame or Series of data with the standardized columns.
         """
-        return self.normalize(X)
+        for col in self.args:
+            if isinstance(X, pd.Series) and X.name != col:
+                continue
+            elif isinstance(X, pd.DataFrame) and col not in X.columns:
+                continue
 
-    def normalize(
-        self, X: Union[pd.DataFrame, pd.Series, np.ndarray]
-    ) -> Union[pd.DataFrame, np.ndarray]:
+            if isinstance(X, pd.Series):
+                return pd.Series(
+                    np.squeeze(
+                        self.transforms[col].transform(
+                            X.to_numpy().reshape(-1, 1)
+                        ),
+                        axis=-1
+                    )
+                )
+            elif isinstance(X, pd.DataFrame):
+                X[col] = self.transforms[col].transform(
+                    X[col].to_numpy().reshape(-1, 1)
+                )
+
+        return X
+
+    def unstandardize(self, z: pd.DataFrame) -> pd.DataFrame:
         """
-        Normalizes a vector of raw values using the fitted transform.
+        Unstandardizes the specified columns in the input DataFrame back into
+        the original representation.
         Input:
-            X: a vector of raw values.
+            X: the DataFrame of data to unstandardize.
         Returns:
-            A vector of the normalized values.
+            The DataFrame of data with the columns in their original
+            representations.
         """
-        if self._is_normalized(X):
-            raise ValueError(
-                "Attempting to normalize already normalized values!"
+        for col in self.args:
+            if col not in z.columns:
+                continue
+            z.loc[:, col] = np.squeeze(
+                self.transforms[col].inverse_transform(
+                    z.loc[:, col].to_numpy().reshape(-1, 1)
+                ),
+                axis=-1
             )
-        if isinstance(X, pd.DataFrame):
-            Xp = np.squeeze(np.power(X[self.key].to_numpy(), self.p))
-            z = X.copy()
-            z[self.key] = self.scaler.transform(Xp[:, np.newaxis])
-            return z
-        elif isinstance(X, pd.Series):
-            X = X.to_numpy()
-        X = np.squeeze(X)[:, np.newaxis]
-        return self.scaler.transform(np.power(X, self.p))
-
-    def invert(
-        self, z: Union[pd.DataFrame, pd.Series, np.ndarray]
-    ) -> Union[pd.DataFrame, np.ndarray]:
-        """
-        Reconstructs a vector of raw values using input normalized values.
-        Input:
-            z: a vector of normalized values.
-        Returns:
-            A vector of the raw values.
-        """
-        if not self._is_normalized(z) and False:
-            raise ValueError(
-                "Attempting to invert already reconstructed values!"
-            )
-        if isinstance(z, pd.DataFrame):
-            X = z.copy()
-            z = np.squeeze(z[self.key].to_numpy())[:, np.newaxis]
-            Xp = self.scaler.inverse_transform(z)
-            X[self.key] = np.power(Xp, 1.0 / self.p)
-            return X
-        elif isinstance(z, pd.Series):
-            z = z.to_numpy()
-        z = np.squeeze(z)[:, np.newaxis]
-        return np.squeeze(
-            np.power(self.scaler.inverse_transform(z), 1.0 / self.p), axis=-1
-        )
-
-    def _is_normalized(
-        self, X: Union[pd.DataFrame, pd.Series, np.ndarray]
-    ) -> bool:
-        """
-        Returns whether an input vector is a vector of normalized values.
-        Input:
-            X: a vector of potentially normalized values.
-        Returns:
-            Whether the vector is normalized or not.
-        """
-        if isinstance(X, pd.DataFrame):
-            X = X[self.key].to_numpy()
-        elif isinstance(X, pd.Series):
-            X = X.to_numpy()
-        X = np.squeeze(X)
-        if not -self.z_atol <= np.mean(X) <= self.z_atol:
-            return False
-        return -self.z_atol <= np.std(X, ddof=1) - 1.0 <= self.z_atol
+        return z

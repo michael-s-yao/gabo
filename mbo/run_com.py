@@ -1,5 +1,6 @@
+#!/usr/bin/env python3
 """
-Main driver program for baseline MBO methods.
+Main driver program for the COM baseline MBO method.
 
 Author(s):
     Michael Yao @michael-s-yao

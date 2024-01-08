@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Main driver program for baseline MBO methods.
 

@@ -16,6 +16,7 @@ from typing import NamedTuple
 sys.path.append(".")
 import mbo  # noqa
 import design_bench
+from models.oracle import BraninOracle
 
 
 class Experiment(NamedTuple):
@@ -42,6 +43,7 @@ def parse_subdir_name(subdir: str) -> Experiment:
     while design_bench.registration.TASK_PATTERN.search(task_name) is None:
         suffix, subdir = subdir.split("-", 1)
         task_name += "-" + suffix
+    task_name = task_name[1:] if task_name.startswith("-") else task_name
     args = subdir.rsplit("-", 1)
     args, seed = ("", args) if len(args) == 1 else (args[0], args[-1])
     return Experiment(id_, method, task_name, args, seed)
@@ -76,24 +78,44 @@ def main():
     results = defaultdict(lambda: [])
     method_to_ids = defaultdict(lambda: set([]))
     task_name_to_ids = defaultdict(lambda: set([]))
+    ninf = -1e12
 
     for subdir in os.listdir(args.results_dir):
         exp = parse_subdir_name(subdir)
 
-        surrogate_scores = np.load(
+        designs = np.load(
+            os.path.join(args.results_dir, subdir, "solution.npy")
+        )
+        preds = np.load(
             os.path.join(args.results_dir, subdir, "predictions.npy")
         )
-        surrogate_scores = surrogate_scores.flatten()
-
-        oracle_scores = np.load(
+        scores = np.load(
             os.path.join(args.results_dir, subdir, "scores.npy")
         )
-        oracle_scores = oracle_scores.flatten()
+        if exp.method == "ddom":
+            designs = designs[-1, :, :]
+            preds = preds[-1, :, :]
+            scores = scores[-1, :, :]
+        designs = designs.reshape(-1, designs.shape[-1])
+        preds = preds.flatten()
+        scores = scores.flatten()
 
-        idxs = np.argsort(surrogate_scores)
-        results[exp.id_] += (
-            oracle_scores[idxs[-args.top_k:]].tolist()
-        )
+        # Invalidate predictions for designs outside of the valid domain.
+        if exp.task_name == os.environ["BRANIN_TASK"]:
+            bounds = BraninOracle().oracle.bounds.detach().cpu().numpy()
+            for dim in [0, 1]:
+                preds = np.where(designs[:, dim] < bounds[0, dim], ninf, preds)
+                preds = np.where(designs[:, dim] > bounds[1, dim], ninf, preds)
+        elif exp.task_name == os.environ["MNIST_TASK"]:
+            preds = np.where(
+                np.any(designs[:, dim] < 0.0, axis=-1), ninf, preds
+            )
+            preds = np.where(
+                np.any(designs[:, dim] > 1.0, axis=-1), ninf, preds
+            )
+
+        idxs = np.argsort(preds)
+        results[exp.id_] += scores[idxs[-args.top_k:]].tolist()
 
         method = f"{exp.method}-{exp.args}" if len(exp.args) else exp.method
         method_to_ids[method].add(exp.id_)

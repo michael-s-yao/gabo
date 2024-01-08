@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Implementation of conservative offline model-based optimization over latent
 spaces via source critic regularization (COMBO-SCR). Our method estimates the

@@ -29,7 +29,8 @@ from design_bench.task import Task
 
 sys.path.append(".")
 from data.molecules.selfies import SELFIESDataset
-from models.oracle.molecule import MoleculeOracle
+from data.warfarin.patients import WarfarinDataset
+from models.oracle import MoleculeOracle, WarfarinDosingOracle
 
 
 class DesignBenchDataModule(pl.LightningDataModule):
@@ -188,7 +189,7 @@ class MNISTIntensityDataset(ContinuousDataset):
             learning research. IEEE Sig Proc Mag 29(6): 141-2. (2012).
             https://doi.org/10.1109/MSP.2012.2211477
     """
-    def __init__(self, root: Union[Path, str], **kwargs):
+    def __init__(self, root: Union[Path, str] = "./data/mnist", **kwargs):
         """
         Args:
             root: root directory containing the MNIST dataset.
@@ -261,4 +262,49 @@ class PenalizedLogPDataset(DiscreteDataset):
 
 
 class WarfarinDosingDataset(ContinuousDataset):
-    pass
+    """
+    Defines the warfarin dosing patient dataset.
+
+    Citation(s):
+        [1] The International Warfarin Pharmacogenetics Consortium. Estimation
+            of the warfarin dose with clinical and pharmacogenetic data. N Engl
+            J Med 360:753-64. (2009). https://doi.org/10.1056/NEJMoa0809329
+    """
+    def __init__(
+        self,
+        dir_name: Union[Path, str] = "./data/warfarin",
+        normalize_y: bool = True,
+        thresh_min_y: Optional[float] = -10.0,
+        **kwargs
+    ):
+        """
+        Args:
+            fname: file path to the directory of the warfarin dataset.
+            normalize_y: whether to normalize the y values by comparing against
+                the cost if the mean dose in the dataset is given instead.
+            thresh_min_y: an optional minimum threshold for oracle values to
+                include in the final dataset.
+        """
+        data = WarfarinDataset(root=dir_name)
+        mean_dose = np.mean(data.doses) if normalize_y else None
+
+        x = data.transform.standardize(data.doses)
+        x = x.to_numpy().astype(np.float32)[..., np.newaxis]
+        self.theta = data.transform.standardize(
+            data.patients.astype(np.float32)
+        )
+        self.theta = self.theta.drop(labels=data.dose, axis=1)
+
+        y = WarfarinDosingOracle(data.transform, mean_dose=mean_dose)(
+            np.squeeze(x, axis=-1), self.theta
+        )
+        y = y.astype(np.float32)
+
+        if thresh_min_y is not None:
+            idxs = np.where(y >= thresh_min_y)[0]
+            x, y, self.theta = x[idxs], y[idxs], self.theta.iloc[idxs]
+
+        super(WarfarinDosingDataset, self).__init__(x, y, **kwargs)
+
+
+ds = MNISTIntensityDataset()
