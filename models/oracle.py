@@ -225,20 +225,28 @@ class WarfarinDosingOracle:
     def __init__(
         self,
         transform: object,
+        column_names: Union[Sequence[str], np.ndarray],
         mean_dose: Optional[float] = None,
         use_pharmacogenetic_algorithm: bool = True
     ):
         """
         Args:
             transform: a transform object to unnormalize input values.
+            column_names: an optional list of the design dimension names.
             mean_dose: an optional warfarin dose to compare against.
             use_pharmacogenetic_algorithm: whether to use the pharmacogenetic
                 dosing algorithm instead of the clinical dosing algorithm
                 presented by IWPC. (NEJM 2009). Default True.
         """
         self.transform = transform
+        self.column_names = (
+            column_names.tolist()
+            if isinstance(column_names, np.ndarray)
+            else column_names
+        )
         self.mean_dose = mean_dose
         self.eps = np.finfo(np.float32).eps
+        self.dose = "Therapeutic Dose of Warfarin"
         self.use_pharmacogenetic_algorithm = use_pharmacogenetic_algorithm
         self._enzyme_inducers = (
             "Carbamazepine (Tegretol)",
@@ -258,48 +266,28 @@ class WarfarinDosingOracle:
         else:
             self.algorithm = self._clinical_dosing_algorithm
 
-    def __call__(
-        self, pred_dose: np.ndarray, X: pd.DataFrame
-    ) -> np.ndarray:
+    def __call__(self, X: np.ndarray) -> np.ndarray:
         """
         Defines a quadratic cost function dependent on a patient's predicted
         dose and true stable warfarin dose.
         Input:
-            pred_dose: the predicted weekly warfarin dose(s) of the patient(s).
-            X: a DataFrame or Series of patient data.
+            X: the predicted weekly warfarin dose(s) and other attributes
+                comprising the patient data.
         Returns:
             The cost associated with each patient's predicted dose.
         """
         X = X.copy()
         for col_name, transform in self.transform.transforms.items():
-            if col_name not in X.columns:
-                pred_dose = transform.inverse_transform(
-                    pred_dose.reshape(-1, 1)
-                )
-            else:
-                X.loc[:, col_name] = transform.inverse_transform(
-                    X.loc[:, col_name]
-                )
-        gt_dose = self.optimal_dose(X)
-        if pred_dose.ndim > 1:
-            gt_dose = gt_dose[..., np.newaxis]
-        y = np.square(pred_dose - gt_dose)
+            idx = self.column_names.index(col_name)
+            X[:, idx] = transform.inverse_transform(X[:, idx])
+        gt_dose = self._dosing_algorithm(
+            pd.DataFrame(X, columns=self.column_names), self.algorithm
+        )
+        y = np.square(X[:, self.column_names.index(self.dose)] - gt_dose)
         if self.mean_dose is None:
-            return -1.0 * y
+            return -1.0 * y.astype(X.dtype)
         ref_y = np.square(self.mean_dose - gt_dose)
-        return (ref_y - y) / (ref_y + self.eps)
-
-    def optimal_dose(self, X: Union[pd.Series, pd.DataFrame]) -> np.ndarray:
-        """
-        Predicts the stable weekly dose of warfarin in mg according to one of
-        either the pharmacogenetic or clinical dosing algorithms presented in
-        IWPC. (NEJM 2009).
-        Input:
-            X: a DataFrame or Series of patient data.
-        Returns:
-            The predicted stable weekly dose of warfarin for the patient(s).
-        """
-        return self._dosing_algorithm(X, self.algorithm)
+        return ((ref_y - y) / (ref_y + self.eps)).astype(X.dtype)
 
     def _dosing_algorithm(
         self, X: Union[pd.Series, pd.DataFrame], algorithm: Dict[Any, float]

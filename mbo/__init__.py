@@ -31,13 +31,16 @@ import design_bench
 import data
 from design_bench.datasets.continuous_dataset import ContinuousDataset
 from design_bench.datasets.discrete_dataset import DiscreteDataset
-from models.oracle import BraninOracle, MNISTOracle, MoleculeOracle
+from models.oracle import (
+    BraninOracle, MNISTOracle, MoleculeOracle, WarfarinDosingOracle
+)
 
 
 TASK_DATASETS = {
     os.environ["BRANIN_TASK"]: data.BraninDataset,
     os.environ["MNIST_TASK"]: data.MNISTIntensityDataset,
     os.environ["MOLECULE_TASK"]: data.PenalizedLogPDataset,
+    os.environ["WARFARIN_TASK"]: data.WarfarinDosingDataset,
 }
 
 
@@ -102,7 +105,13 @@ class OracleWrapper:
         return {
             os.environ["BRANIN_TASK"]: BraninOracle(),
             os.environ["MNIST_TASK"]: MNISTOracle(),
-            os.environ["MOLECULE_TASK"]: MoleculeOracle("logP")
+            os.environ["MOLECULE_TASK"]: MoleculeOracle("logP"),
+            os.environ["WARFARIN_TASK"]: WarfarinDosingOracle(
+                self.dataset.transform,
+                column_names=self.dataset.column_names,
+                mean_dose=self.dataset.mean_dose,
+                use_pharmacogenetic_algorithm=True
+            )
         }
 
 
@@ -118,13 +127,21 @@ def register(task_name: str) -> None:
     dataset_kwargs = {
         "max_samples": None,
         "distribution": None,
-        "max_percentile": 100,
-        "min_percentile": 0
+        "max_percentile": 100.0,
+        "min_percentile": 0.0
     }
-    if task_name == os.environ["MNIST_TASK"]:
+    if task_name == os.environ["BRANIN_TASK"]:
+        dataset_kwargs["max_percentile"] = 80.0
+    elif task_name == os.environ["MNIST_TASK"]:
         dataset_kwargs["root"] = "./data/mnist"
     elif task_name == os.environ["MOLECULE_TASK"]:
         dataset_kwargs["fname"] = "./data/molecules/val_selfie.gz"
+    elif task_name == os.environ["WARFARIN_TASK"]:
+        dataset_kwargs.update({
+            "dir_name": "./data/warfarin",
+            "normalize_y": True,
+            "thresh_min_y": -10.0
+        })
 
     design_bench.register(
         task_name,

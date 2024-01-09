@@ -28,6 +28,7 @@ from design_bench.datasets.continuous_dataset import ContinuousDataset
 from design_bench.task import Task
 
 sys.path.append(".")
+from data.conditional import ConditionalContinuousDataset
 from data.molecules.selfies import SELFIESDataset
 from data.warfarin.patients import WarfarinDataset
 from models.oracle import MoleculeOracle, WarfarinDosingOracle
@@ -141,29 +142,18 @@ class BraninDataset(ContinuousDataset):
             function of n variables. In: Numerical Method for Nonlinear
             Optimization, Cambridge. (1972).
     """
-    def __init__(
-        self,
-        n: int = 1000,
-        exclude_top_p: float = 0.2,
-        seed: int = 42,
-        **kwargs
-    ):
+    def __init__(self, n: int = 1000, **kwargs):
         """
         Args:
             n: number of datums in the dataset. Default 1000.
-            exclude_top_p: fraction of highest scoring datums to exclude from
-                the dataset.
-            seed: random seed. Default 42.
         """
-        self.n, self.exclude_top_p, self.seed = n, exclude_top_p, seed
-        self.rng = np.random.RandomState(self.seed)
         self.func = Branin(negate=True)
         self.sampler = torch.quasirandom.SobolEngine(
             self.func.bounds.size(dim=0), scramble=True, seed=self.seed
         )
         self.x1_range = self.func.bounds[:, 0].detach().cpu().numpy()
         self.x2_range = self.func.bounds[:, -1].detach().cpu().numpy()
-        x = self.sampler.draw(self.n)
+        x = self.sampler.draw(n)
         x[:, 0] = self.x1_range[0] + (
             (self.x1_range[1] - self.x1_range[0]) * x[:, 0]
         )
@@ -171,12 +161,7 @@ class BraninDataset(ContinuousDataset):
             (self.x2_range[1] - self.x2_range[0]) * x[:, 1]
         )
         x, y = x.detach().cpu().numpy(), self.func(x).detach().cpu().numpy()
-        if self.exclude_top_p > 0.0:
-            idxs = np.argsort(y)[:-round(self.exclude_top_p * self.n)]
-            x, y = x[idxs], y[idxs]
-        idxs = self.rng.permutation(len(x))
-        x, y = x[idxs], y[idxs][..., np.newaxis]
-        x, y = x.astype(np.float32), y.astype(np.float32)
+        x, y = x.astype(np.float32), y[..., np.newaxis].astype(np.float32)
         super(BraninDataset, self).__init__(x, y, **kwargs)
 
 
@@ -261,7 +246,7 @@ class PenalizedLogPDataset(DiscreteDataset):
         )
 
 
-class WarfarinDosingDataset(ContinuousDataset):
+class WarfarinDosingDataset(ConditionalContinuousDataset):
     """
     Defines the warfarin dosing patient dataset.
 
@@ -286,25 +271,33 @@ class WarfarinDosingDataset(ContinuousDataset):
                 include in the final dataset.
         """
         data = WarfarinDataset(root=dir_name)
-        mean_dose = np.mean(data.doses) if normalize_y else None
+        self.mean_dose = np.mean(data.doses) if normalize_y else None
 
-        x = data.transform.standardize(data.doses)
-        x = x.to_numpy().astype(np.float32)[..., np.newaxis]
-        self.theta = data.transform.standardize(
-            data.patients.astype(np.float32)
+        doses = data.transform.standardize(data.doses)
+        doses = doses.to_numpy().astype(np.float32)
+        patient_attributes = data.transform.standardize(
+            data.patients.drop(labels=data.dose, axis=1).astype(np.float32)
         )
-        self.theta = self.theta.drop(labels=data.dose, axis=1)
+        continuous_vars = [data.height, data.weight]
+        column_names = continuous_vars + sorted(
+            list(set(patient_attributes.columns) - set(continuous_vars))
+        )
+        patient_attributes = patient_attributes[column_names].to_numpy()
 
-        y = WarfarinDosingOracle(data.transform, mean_dose=mean_dose)(
-            np.squeeze(x, axis=-1), self.theta
+        x = np.hstack([doses[..., np.newaxis], patient_attributes])
+        column_names = np.array([data.dose] + column_names)
+        grad_mask = (column_names == data.dose).astype(x.dtype)
+        self.transform = data.transform
+
+        oracle = WarfarinDosingOracle(
+            data.transform, column_names, mean_dose=self.mean_dose
         )
-        y = y.astype(np.float32)
+        y = oracle(x)[:, np.newaxis]
 
         if thresh_min_y is not None:
             idxs = np.where(y >= thresh_min_y)[0]
-            x, y, self.theta = x[idxs], y[idxs], self.theta.iloc[idxs]
+            x, y = x[idxs], y[idxs]
 
-        super(WarfarinDosingDataset, self).__init__(x, y, **kwargs)
-
-
-ds = MNISTIntensityDataset()
+        super(WarfarinDosingDataset, self).__init__(
+            x, y, grad_mask, column_names=column_names, **kwargs
+        )

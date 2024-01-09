@@ -52,7 +52,9 @@ class JointVAESurrogate(pl.LightningModule):
         self.save_hyperparameters(ignore="task")
         self.task = task
 
-        if self.hparams.task_name == os.environ["BRANIN_TASK"]:
+        if self.hparams.task_name in (
+            os.environ["BRANIN_TASK"], os.environ["WARFARIN_TASK"]
+        ):
             self.vae = IdentityVAE(in_dim=self.task.input_shape[0], **kwargs)
             self.hparams.beta = 1.0
         elif self.hparams.task_name == os.environ["MOLECULE_TASK"]:

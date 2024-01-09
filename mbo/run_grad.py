@@ -91,7 +91,7 @@ def reduce_preds(
 
 
 def gradient_ascent(
-    task: str,
+    task_name: str,
     logging_dir: Union[Path, str],
     aggregation_method: Optional[str] = None,
     num_epochs: int = 100,
@@ -108,7 +108,7 @@ def gradient_ascent(
     the gradient_ascent() baseline method from the design-baselines repo cited
     at the top of this source code file.
     Input:
-        task: name of the offline model-based optimization (MBO) task.
+        task_name: name of the offline model-based optimization (MBO) task.
         logging_dir: directory to log the optimization results to.
         aggregation_method: optional specification of aggregating the results
             of an ensemble of surrogate models. One of [None, `mean`, `min`].
@@ -128,7 +128,7 @@ def gradient_ascent(
         None.
     """
     logger = Logger(logging_dir)
-    task = StaticGraphTask(task, relabel=False)
+    task = StaticGraphTask(task_name, relabel=False)
 
     if task.is_discrete:
         task.map_to_logits()
@@ -146,8 +146,11 @@ def gradient_ascent(
         for _ in range(num_models)
     ]
 
-    # Scale the learning rate based on the number of channels in x.
-    solver_lr *= np.sqrt(np.prod(task.x.shape[1:]))
+    # Scale the learning rate based on the number of design dimensions.
+    if hasattr(task.wrapped_task.dataset, "grad_mask"):
+        solver_lr *= np.sqrt(np.sum(task.wrapped_task.dataset.grad_mask))
+    else:
+        solver_lr *= np.sqrt(np.prod(task.input_shape))
 
     trs = []
     for i, fm in enumerate(forward_models):
@@ -168,9 +171,13 @@ def gradient_ascent(
         trainer.launch(train, validate, logger=logger, epochs=num_epochs)
 
     # Select the top k initial designs from the dataset as starting points.
-    indices = tf.math.top_k(np.squeeze(task.y, axis=-1), k=solver_samples)
-    indices = indices[1]
-    X = tf.gather(task.x, indices, axis=0)
+    if task_name == os.environ["WARFARIN_TASK"]:
+        X = tf.convert_to_tensor(task.x)
+        solver_steps = solver_steps * solver_samples
+    else:
+        indices = tf.math.top_k(np.squeeze(task.y, axis=-1), k=solver_samples)
+        indices = indices[1]
+        X = tf.gather(task.x, indices, axis=0)
     all_X = X.numpy()[np.newaxis, ...]
 
     # Perform gradient ascent on the score through the surrogate model.
@@ -184,6 +191,10 @@ def gradient_ascent(
         grads = tape.gradient(score, X)
 
         # Use the conservative optimizer to update the solution.
+        if hasattr(task.wrapped_task.dataset, "grad_mask"):
+            grads = grads * tf.convert_to_tensor(
+                task.wrapped_task.dataset.grad_mask
+            )
         X = X + (solver_lr * grads)
         all_X = np.concatenate([all_X, X.numpy()[np.newaxis, ...]], axis=0)
     all_X = all_X[1:, ...]
@@ -211,6 +222,7 @@ def gradient_ascent(
 def main():
     args = vars(build_args())
     seed_everything(seed=args.pop("seed"))
+    args["task_name"] = args.pop("task")
     gradient_ascent(**args)
 
 
