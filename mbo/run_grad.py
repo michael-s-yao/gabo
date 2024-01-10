@@ -172,7 +172,7 @@ def gradient_ascent(
 
     # Select the top k initial designs from the dataset as starting points.
     if task_name == os.environ["WARFARIN_TASK"]:
-        X = tf.convert_to_tensor(task.x)
+        X = tf.concat([x for x, _ in validate], axis=0)
         solver_steps = solver_steps * solver_samples
     else:
         indices = tf.math.top_k(np.squeeze(task.y, axis=-1), k=solver_samples)
@@ -199,7 +199,7 @@ def gradient_ascent(
         all_X = np.concatenate([all_X, X.numpy()[np.newaxis, ...]], axis=0)
     all_X = all_X[1:, ...]
 
-    # Evaluate the design using the oracle and the forward model.
+    # Evaluate the designs using the oracle and the forward model.
     preds = reduce_preds(
         [
             fm.get_distribution(all_X.reshape(-1, *task.input_shape)).mean()

@@ -11,6 +11,7 @@ import numpy as np
 import os
 import random
 import pytorch_lightning as pl
+import tensorflow as tf
 import torch
 import torch.distributed as dist
 import warnings
@@ -27,6 +28,7 @@ def seed_everything(seed: int = 42) -> None:
     """
     pl.seed_everything(seed=seed, workers=True)
     torch.manual_seed(seed)
+    tf.keras.utils.set_random_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
