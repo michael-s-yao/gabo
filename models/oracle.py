@@ -36,7 +36,7 @@ from guacamol import standard_benchmarks as SB
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 sys.path.append(".")
-from utils import plot_config
+from helpers import plot_config
 import models.sascorer as sascorer
 
 
@@ -327,9 +327,12 @@ class WarfarinDosingOracle:
             A dictionary mapping patient attributes to their respective
             multiplicative weights in the linear regression dosing model.
         """
+        # Note that the decade age is divided by 10 in our input dataset, so
+        # we multiply the coefficient for age by 10 here when compared to the
+        # original algorithm to correct for this.
         return {
             "bias": 5.6044,
-            "Age": -0.2614,
+            "Age": -0.2614 * 10.0,
             "Height (cm)": 0.0087,
             "Weight (kg)": 0.0128,
             "Imputed VKORC1_A/G": -0.8677,
@@ -358,9 +361,12 @@ class WarfarinDosingOracle:
             A dictionary mapping patient attributes to their respective
             multiplicative weights in the linear regression dosing model.
         """
+        # Note that the decade age is divided by 10 in our input dataset, so
+        # we multiply the coefficient for age by 10 here when compared to the
+        # original algorithm to correct for this.
         return {
             "bias": 4.0376,
-            "Age": -0.2546,
+            "Age": -0.2546 * 10.0,
             "Height (cm)": 0.0118,
             "Weight (kg)": 0.0134,
             "Race (OMB)_Asian": -0.6752,

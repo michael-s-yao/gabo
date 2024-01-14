@@ -14,6 +14,7 @@ Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 import numpy as np
 import os
 import pickle
+import pandas as pd
 import selfies as sf
 import sys
 import torch
@@ -142,14 +143,15 @@ class BraninDataset(ContinuousDataset):
             function of n variables. In: Numerical Method for Nonlinear
             Optimization, Cambridge. (1972).
     """
-    def __init__(self, n: int = 1000, **kwargs):
+    def __init__(self, n: int = 1000, seed: int = 42, **kwargs):
         """
         Args:
             n: number of datums in the dataset. Default 1000.
+            seed: random seed. Default 42.
         """
         self.func = Branin(negate=True)
         self.sampler = torch.quasirandom.SobolEngine(
-            self.func.bounds.size(dim=0), scramble=True, seed=self.seed
+            self.func.bounds.size(dim=0), scramble=True, seed=seed
         )
         self.x1_range = self.func.bounds[:, 0].detach().cpu().numpy()
         self.x2_range = self.func.bounds[:, -1].detach().cpu().numpy()
@@ -270,27 +272,27 @@ class WarfarinDosingDataset(ConditionalContinuousDataset):
             thresh_min_y: an optional minimum threshold for oracle values to
                 include in the final dataset.
         """
-        data = WarfarinDataset(root=dir_name)
-        self.mean_dose = np.mean(data.doses) if normalize_y else None
+        self.data = WarfarinDataset(root=dir_name)
+        self.mean_dose = np.mean(self.data.doses) if normalize_y else None
 
-        doses = data.transform.standardize(data.doses)
+        doses = self.data.transform.standardize(self.data.doses)
         doses = doses.to_numpy().astype(np.float32)
-        patient_attributes = data.transform.standardize(
-            data.patients.drop(labels=data.dose, axis=1).astype(np.float32)
+        patient_attributes = self.data.transform.standardize(
+            self.data.patients.drop(self.data.dose, axis=1).astype(np.float32)
         )
-        continuous_vars = [data.height, data.weight]
-        column_names = continuous_vars + sorted(
-            list(set(patient_attributes.columns) - set(continuous_vars))
+        self.continuous_vars = self.data.continuous_vars
+        column_names = self.continuous_vars + sorted(
+            list(set(patient_attributes.columns) - set(self.continuous_vars))
         )
         patient_attributes = patient_attributes[column_names].to_numpy()
 
         x = np.hstack([doses[..., np.newaxis], patient_attributes])
-        column_names = np.array([data.dose] + column_names)
-        grad_mask = (column_names == data.dose).astype(x.dtype)
-        self.transform = data.transform
+        column_names = np.array([self.data.dose] + column_names)
+        grad_mask = (column_names == self.data.dose).astype(x.dtype)
+        self.transform = self.data.transform
 
         oracle = WarfarinDosingOracle(
-            data.transform, column_names, mean_dose=self.mean_dose
+            self.data.transform, column_names, mean_dose=self.mean_dose
         )
         y = oracle(x)[:, np.newaxis]
 
@@ -301,3 +303,19 @@ class WarfarinDosingDataset(ConditionalContinuousDataset):
         super(WarfarinDosingDataset, self).__init__(
             x, y, grad_mask, column_names=column_names, **kwargs
         )
+
+    @property
+    def opt_dim_bounds(self) -> np.ndarray:
+        """
+        Returns a 2xd tensor of the optimization bounds for the optimization
+        dimensions, where d is the number of dimensions that are optimized
+        over.
+        Input:
+            None.
+        Returns:
+            A 2xd tensor of optimization bounds.
+        """
+        bounds = self.data.transform.standardize(
+            pd.DataFrame(self.data.thresh, columns=[self.data.dose])
+        )
+        return bounds.to_numpy()

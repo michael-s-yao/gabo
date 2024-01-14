@@ -74,3 +74,16 @@ class ConditionalContinuousDataset(ContinuousDataset):
         )
         self.grad_mask = grad_mask
         self.column_names = column_names
+
+    @property
+    def opt_dim_bounds(self) -> np.ndarray:
+        """
+        Returns a 2xd tensor of the optimization bounds for the optimization
+        dimensions, where d is the number of dimensions that are optimized
+        over.
+        Input:
+            None.
+        Returns:
+            A 2xd tensor of optimization bounds.
+        """
+        raise NotImplementedError

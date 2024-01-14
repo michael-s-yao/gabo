@@ -31,7 +31,7 @@ from design_baselines.data import StaticGraphTask, build_pipeline
 from design_baselines.logger import Logger
 from design_baselines.coms_cleaned.nets import ForwardModel
 from models.ccom import ConditionalConservativeObjectiveModel
-from utils import seed_everything
+from helpers import seed_everything
 
 
 def pop_seed() -> Optional[int]:

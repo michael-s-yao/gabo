@@ -110,5 +110,19 @@
     "hidden_size": 128,
     "latent_size": 32,
     "lr": 0.0003
+  },
+  "Warfarin-Linear-v0": {
+    "batch_size": 8,
+    "budget": 256,
+    "z_bound": 4.0,
+    "c": 0.1,
+    "critic_lr": 0.01,
+    "critic_patience": 100,
+    "num_generator_per_critic": 4,
+    "search_budget": 4096,
+    "norm_thresh": 0.1,
+    "num_restarts": 10,
+    "raw_samples": 256,
+    "verbose": true
   }
 }

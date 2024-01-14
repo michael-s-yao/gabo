@@ -18,8 +18,9 @@ import sys
 import logging
 import torch
 import transformers
+import gpytorch
 import warnings
-from typing import Callable, Dict, Union
+from typing import Callable, Union
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 sys.path.append(".")
@@ -27,6 +28,9 @@ sys.path.append("design-baselines")
 torch.set_default_dtype(torch.float64)
 transformers.logging.set_verbosity_error()
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings(
+    "ignore", category=gpytorch.utils.warnings.NumericalWarning
+)
 import design_bench
 import data
 from design_bench.datasets.continuous_dataset import ContinuousDataset
@@ -59,7 +63,7 @@ class OracleWrapper:
         """
         self.task_name = task_name
         self.dataset = dataset
-        self.oracle = self._task_oracle[self.task_name]
+        self.oracle = self.task_oracle()
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
         """
@@ -93,26 +97,27 @@ class OracleWrapper:
         """
         return self(x)
 
-    @property
-    def _task_oracle(self) -> Dict[str, Callable]:
+    def task_oracle(self) -> Callable:
         """
-        Returns the oracle function for each of the defined MBO tasks.
+        Returns the oracle function associated with the MBO task.
         Input:
             None.
         Returns:
-            A dictionary mapping the task name to the oracle function.
+            The oracle function associated with the task name.
         """
-        return {
-            os.environ["BRANIN_TASK"]: BraninOracle(),
-            os.environ["MNIST_TASK"]: MNISTOracle(),
-            os.environ["MOLECULE_TASK"]: MoleculeOracle("logP"),
-            os.environ["WARFARIN_TASK"]: WarfarinDosingOracle(
+        if self.task_name == os.environ["BRANIN_TASK"]:
+            return BraninOracle()
+        elif self.task_name == os.environ["MNIST_TASK"]:
+            return MNISTOracle()
+        elif self.task_name == os.environ["MOLECULE_TASK"]:
+            return MoleculeOracle("logP")
+        elif self.task_name == os.environ["WARFARIN_TASK"]:
+            return WarfarinDosingOracle(
                 self.dataset.transform,
                 column_names=self.dataset.column_names,
                 mean_dose=self.dataset.mean_dose,
                 use_pharmacogenetic_algorithm=True
             )
-        }
 
 
 def register(task_name: str) -> None:

@@ -29,6 +29,7 @@ class WarfarinDataset:
 
         self.height = "Height (cm)"
         self.weight = "Weight (kg)"
+        self.continuous_vars = [self.height, self.weight]
         self.age = "Age"
         self.race = "Race (OMB)"
         self.gender = "Gender"
@@ -40,7 +41,6 @@ class WarfarinDataset:
         self.did_reach_stable_dose = "Subject Reached Stable Dose of Warfarin"
         self.inr = "INR on Reported Therapeutic Dose of Warfarin"
         self.target_inr = "Estimated Target INR Range Based on Indication"
-        self.thresh = 315  # Threshold for extreme weekly warfarin dose.
 
         with open(os.path.join(self.root, "metadata.json"), "rb") as f:
             self.metadata = json.load(f)
@@ -48,6 +48,8 @@ class WarfarinDataset:
             os.path.join(self.root, self.metadata["dataset"])
         ) as xls:
             self.dataset = pd.read_excel(xls, "Subject Data")[self.columns]
+        # Threshold for extreme weekly warfarin doses.
+        self.thresh = np.array([[0.0], [315.0]])
 
         self._prune()
         self._impute_heights_and_weights()
@@ -78,9 +80,9 @@ class WarfarinDataset:
         self.dataset.dropna(
             subset=[self.race, self.gender, self.age], how="any", inplace=True
         )
-        # Convert ages to decades.
+        # Convert ages to decades / 10.
         self.dataset[self.age] = np.array(
-            [int(x[0]) for x in self.dataset[self.age]]
+            [float(int(x[0]) / 10.0) for x in self.dataset[self.age]]
         )
         # Impute target INRs.
         self._impute_target_INR()
@@ -119,7 +121,9 @@ class WarfarinDataset:
             self.dataset[self.CYP2C9].isna(), self.CYP2C9
         ] = "Unknown"
         # Exclude extreme warfarin doses.
-        self.dataset = self.dataset[self.dataset[self.dose] < self.thresh]
+        self.dataset = self.dataset[
+            self.dataset[self.dose] < self.thresh.max()
+        ]
         # Convert the remaining categorical variables to one-hot encodings.
         self.dataset = pd.get_dummies(
             self.dataset, columns=[self.CYP2C9, self.VKORC1]

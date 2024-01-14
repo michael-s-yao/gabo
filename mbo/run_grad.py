@@ -26,7 +26,7 @@ from design_baselines.data import StaticGraphTask, build_pipeline
 from design_baselines.logger import Logger
 from design_baselines.gradient_ascent.trainers import MaximumLikelihood
 from design_baselines.gradient_ascent.nets import ForwardModel
-from utils import seed_everything
+from helpers import seed_everything
 
 
 def build_args() -> argparse.Namespace:

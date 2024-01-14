@@ -31,7 +31,7 @@ sys.path.append("ddom")
 sys.path.append("ddom/design_baselines/diff")
 import mbo  # noqa
 import design_bench
-from utils import seed_everything, get_device
+from helpers import seed_everything, get_device
 from ddom.design_baselines.diff.trainer import RvSDataModule
 from ddom.design_baselines.diff.nets import DiffusionTest, DiffusionScore
 from ddom.design_baselines.diff.forward import ForwardModel
@@ -372,19 +372,25 @@ def ddom_eval(
         np.save(os.path.join(logging_dir, "solution.npy"), designs)
         np.save(os.path.join(logging_dir, "predictions.npy"), preds)
         np.save(os.path.join(logging_dir, "scores.npy"), scores)
-        logging.info(f"Saved experiments results to {logging_dir}")
+        logging.info(f"Saved experiment results to {logging_dir}")
 
 
 def main():
     args = build_args()
     seed_everything(args.seed)
     torch.set_default_dtype(torch.float32)
-    ddom_train(args.task, hidden_size=args.hidden_size, device=args.device)
+    ddom_train(
+        args.task,
+        hidden_size=args.hidden_size,
+        device=args.device,
+        seed=args.seed
+    )
     ddom_eval(
         args.task,
         logging_dir=args.logging_dir,
         hidden_size=args.hidden_size,
-        device=args.device
+        device=args.device,
+        seed=args.seed
     )
 
 

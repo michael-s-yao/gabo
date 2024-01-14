@@ -211,7 +211,9 @@ class JointVAESurrogate(pl.LightningModule):
         Returns:
             The mean reconstruction loss term of the ELBO loss.
         """
-        if self.hparams.task_name == os.environ["BRANIN_TASK"]:
+        if self.hparams.task_name in (
+            os.environ["BRANIN_TASK"], os.environ["WARFARIN_TASK"]
+        ):
             return 0.0
         if self.task.is_discrete:
             return F.cross_entropy(

@@ -80,6 +80,7 @@ class COMBOSCRPolicy:
         self.hparams = locals()
         self.save_hyperparameters()
         self.model, self.state_dict = None, None
+        self.NINF = -1e12
 
         self.critic = FCNN(
             in_dim=self.hparams.z_dim,
@@ -238,7 +239,7 @@ class COMBOSCRPolicy:
         X = self.hparams.ref_dataset[idxs]
         return X.to(self.hparams.device, dtype=torch.float64)
 
-    def alpha(self, z_ref: torch.Tensor) -> float:
+    def alpha(self, z_ref: torch.Tensor, **kwargs) -> float:
         """
         Returns the optimal value of alpha according to the dual optimization
         problem.
@@ -268,7 +269,7 @@ class COMBOSCRPolicy:
             ((alpha - 1.0) * self.hparams.surrogate(zstar).squeeze(dim=-1)) + (
                 alpha * self.wasserstein(z_ref, zstar)
             ),
-            -1e12
+            self.NINF
         )
 
     def _search(self, alpha: torch.Tensor) -> torch.Tensor:
