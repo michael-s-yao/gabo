@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from pathlib import Path
-from typing import Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union
 
 sys.path.append(".")
 sys.path.append("ddom")
@@ -33,7 +33,12 @@ import mbo  # noqa
 import design_bench
 from helpers import seed_everything, get_device
 from ddom.design_baselines.diff.trainer import RvSDataModule
-from ddom.design_baselines.diff.nets import DiffusionTest, DiffusionScore
+from ddom.design_baselines.diff.nets import (
+    DiffusionTest, DiffusionScore, Swish
+)
+from ddom.design_baselines.diff.lib.sdes import (
+    PluginReverseSDE, VariancePreservingSDE
+)
 from ddom.design_baselines.diff.forward import ForwardModel
 
 
@@ -84,7 +89,8 @@ def heun_sampler(
     num_samples: int = 256,
     num_steps: int = 1000,
     gamma: float = 1.0,
-    device: torch.device = torch.device("cpu")
+    device: torch.device = torch.device("cpu"),
+    grad_mask: Optional[torch.Tensor] = None
 ) -> Sequence[torch.Tensor]:
     """
     Input:
@@ -94,9 +100,11 @@ def heun_sampler(
         num_steps: number of integration steps for sampling. Default 1000.
         gamma: drift parameter. Default 1.0.
         device: device. Default CPU.
+        grad_mask: optional gradient mask for conditional optimization tasks.
     Returns:
         A sequence of the designs generated at each step.
     """
+    grad_mask = grad_mask.to(device) if grad_mask is not None else None
     if task.is_discrete:
         X0 = torch.randn(
             num_samples, task.x.shape[-1] * task.x.shape[-2], device=device
@@ -117,17 +125,167 @@ def heun_sampler(
             tn.fill_(ts[i + 1].item())
         mu = sde.gen_sde.mu(t, Xt, y, gamma=gamma)
         sigma = sde.gen_sde.sigma(t, Xt)
-        Xt = Xt + (delta * mu) + (
-            (delta ** 0.5) * sigma * torch.randn_like(Xt)
-        )
+        dX = (delta * mu) + (delta ** 0.5) * sigma * torch.randn_like(Xt)
+        dX = dX * grad_mask if grad_mask is not None else dX
+        Xt = Xt + dX
         if i < num_steps - 1:
             sigma2 = sde.gen_sde.sigma(tn, Xt)
-            Xt = Xt + (
-                (sigma2 - sigma) / 2 * delta ** 0.5 * torch.randn_like(Xt)
-            )
+            dX = (sigma2 - sigma) / 2 * delta ** 0.5 * torch.randn_like(Xt)
+            dX = dX * grad_mask if grad_mask is not None else dX
+            Xt = Xt + dX
         Xs.append(Xt.detach().cpu())
 
     return Xs
+
+
+class ConditionalPluginReverseSDE(PluginReverseSDE):
+    """Implements a conditional SDE diffusion model."""
+
+    def __init__(
+        self,
+        base_sde: VariancePreservingSDE,
+        drift_a: nn.Module,
+        T: torch.Tensor,
+        grad_mask: torch.Tensor,
+        vtype: str = "rademacher",
+        debias: bool = False
+    ):
+        """
+        Args:
+            base_sde: a Stochastic Differential Equation (SDE) diffusion model.
+            drift_a: the drift coefficient function modeled as a neural net.
+            T: maximum time step.
+            grad_mask: a mask tensor indicating with dimensions of the input
+                are to be optimized over.
+            vtype: random vector specification for the Hutchinson trace
+                estimator.
+            debias: whether to use non-uniform sampling to debias the denoising
+                loss.
+        """
+        super(ConditionalPluginReverseSDE, self).__init__(
+            base_sde=base_sde, drift_a=drift_a, T=T, vtype=vtype, debias=debias
+        )
+        self.grad_mask = grad_mask
+
+    @torch.enable_grad()
+    def dsm_weighted(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        w: torch.Tensor,
+        clip: bool = False,
+        c_min: Optional[torch.Tensor] = None,
+        c_max: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """
+        Defines the weighted denoising score matching loss function.
+        Input:
+            x: a tensor of input x values.
+            y: a tensor of corresponding y values.
+            w: a tensor of corresponding weight values.
+            clip: whether to clip the x values.
+            c_min: minimum x value if clip is True.
+            c_max: maximum x value if clip is True.
+        Returns:
+            The weighted denoising score matching loss term.
+        """
+        if self.debias:
+            t_ = self.base_sde.sample_debiasing_t(
+                [x.size(0)] + [1 for _ in range(x.ndim - 1)]
+            )
+        else:
+            t_ = self.T * torch.rand(
+                [x.size(0)] + [1 for _ in range(x.ndim - 1)],
+                device=x.device,
+                dtype=x.dtype
+            )
+        x_hat, target, std, g = self.base_sde.sample(t_, x, return_noise=True)
+
+        if clip:
+            c_min = c_min.repeat((x.size(0), 1))
+            c_max = c_max.repeat((x.size(0), 1))
+            x_hat = torch.clip(x_hat, min=c_min, max=c_max)
+
+        a = self.a(x_hat, t_.squeeze(), y)
+
+        loss = (w * ((a * std / g + target) ** 2)).view(x.size(0), -1)
+        loss = loss * torch.unsqueeze(self.grad_mask.to(loss), dim=0)
+        return torch.sum(loss, dim=-1) / 2.0
+
+    @torch.enable_grad()
+    def dsm(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """
+        Defines the unweighted denoising score matching loss function.
+        Input:
+            x: a tensor of input x values.
+            y: a tensor of corresponding y values.
+        Returns:
+            The unweighted denoising score matching loss term.
+        """
+        return self.dsm_weighted(x, y, w=1.0)
+
+
+class ConditionalDiffusionTest(DiffusionTest):
+    def __init__(
+        self,
+        taskname: str,
+        task: design_bench.task.Task,
+        grad_mask: Union[np.ndarray, torch.Tensor],
+        hidden_size: int = 1024,
+        learning_rate: float = 1e-3,
+        beta_min: float = 0.1,
+        beta_max: float = 20.0,
+        simple_clip: bool = False,
+        activation_fn: Callable = Swish(),
+        T0: float = 1.0,
+        debias: bool = False,
+        vtype: str = "rademacher"
+    ):
+        """
+        Args:
+            taskname: the name of the offline model-based optimization (MBO)
+                task.
+            task: an offline model-based optimization (MBO) task.
+            grad_mask: a mask tensor indicating with dimensions of the input
+                are to be optimized over.
+            hidden_size: hidden size of the model. Default 1024.
+            learning_rate: learning rate. Default 1e-3.
+            beta_min: beta_min parameter for forward SDE model training.
+            beta_max: beta_max parameter for forward SDE model training.
+            activation_fn: activation function. Default Swish() function.
+            T0: maximum time step.
+            debias: whether to use non-uniform sampling to debias the denoising
+                loss.
+            vtype: random vector specification for the Hutchinson trace
+                estimator.
+        """
+        super(ConditionalDiffusionTest, self).__init__(
+            taskname=taskname,
+            task=task,
+            hidden_size=hidden_size,
+            learning_rate=learning_rate,
+            beta_min=beta_min,
+            beta_max=beta_max,
+            dropout_p=0.0,
+            simple_clip=simple_clip,
+            activation_fn=activation_fn,
+            T0=T0,
+            debias=debias,
+            vtype=vtype
+        )
+        self.grad_mask = grad_mask
+        if isinstance(self.grad_mask, np.ndarray):
+            self.grad_mask = torch.from_numpy(self.grad_mask)
+        self.grad_mask = self.grad_mask.to(self.device)
+
+        self.gen_sde = ConditionalPluginReverseSDE(
+            self.inf_sde,
+            self.drift_q,
+            self.T,
+            grad_mask=self.grad_mask,
+            vtype=self.vtype,
+            debias=self.debias
+        )
 
 
 def ddom_train_surrogate(
@@ -232,6 +390,7 @@ def ddom_train(
         None.
     """
     task = design_bench.make(task_name)
+    is_conditional_task = task_name in [os.environ["WARFARIN_TASK"]]
     if task.is_discrete:
         task.map_to_logits()
 
@@ -252,7 +411,14 @@ def ddom_train(
         temp="90"
     )
 
-    if not score_matching:
+    if is_conditional_task:
+        model = ConditionalDiffusionTest(
+            taskname=task_name,
+            task=task,
+            grad_mask=task.dataset.grad_mask,
+            learning_rate=lr
+        )
+    elif not score_matching:
         model = DiffusionTest(
             taskname=task_name,
             task=task,
@@ -319,11 +485,20 @@ def ddom_eval(
     """
     device = get_device(device)
     task = design_bench.make(task_name)
+    is_conditional_task = task_name in [os.environ["WARFARIN_TASK"]]
     if task.is_discrete:
         task.map_to_logits()
 
     model_ckpt = os.path.join(ckpt_dir, f"ddom-{task_name}-{seed}.ckpt")
-    if not score_matching:
+    if is_conditional_task:
+        model = ConditionalDiffusionTest.load_from_checkpoint(
+            model_ckpt,
+            taskname=task_name,
+            task=task,
+            grad_mask=task.dataset.grad_mask,
+            map_location=device
+        )
+    elif not score_matching:
         model = DiffusionTest.load_from_checkpoint(
             model_ckpt, taskname=task_name, task=task, map_location=device
         )
@@ -346,12 +521,16 @@ def ddom_eval(
     surrogate.eval()
 
     designs, preds, scores = [], [], []
+    grad_mask = None
+    if hasattr(task.dataset, "grad_mask"):
+        grad_mask = torch.from_numpy(task.dataset.grad_mask).to(device)
     for X in heun_sampler(
         task,
         model,
         num_samples=num_samples,
         num_steps=num_steps,
-        device=device
+        device=device,
+        grad_mask=grad_mask
     ):
         if X.isnan().any():
             continue

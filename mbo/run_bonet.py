@@ -11,7 +11,10 @@ Citation(s):
         https://dl.acm.org/doi/10.5555/3618408.3619142
 
 Adapted from the bonet GitHub repo by @siddarthk97 at https://github.com/
-siddarthk97/bonet
+siddarthk97/bonet. Specifically, the relevant source code files are:
+    [1] bonet/scripts/sorted_binning.py
+    [2] bonet/scripts/train_desbench_new.py
+    [3] bonet/scripts/test_desbench_new.py
 
 Licensed under the MIT License. Copyright University of Pennsylvania 2023.
 """
@@ -24,13 +27,13 @@ import sys
 import torch
 from math import ceil
 from pathlib import Path
-from torch import from_numpy
 from typing import NamedTuple, Optional, Tuple, Union
 
 sys.path.append(".")
 sys.path.append("bonet")
 import mbo  # noqa
 import design_bench
+from mbo.run_comboscr import load_vae_and_surrogate_models
 from bonet.mingpt.model import GPT, GPTConfig
 from bonet.mingpt.model_discrete_new import GPTDiscrete
 from bonet.mingpt.model_discrete_new import GPTConfig as GPTConfigDiscrete
@@ -356,48 +359,72 @@ class DummyWriter:
         return  # Do nothing.
 
 
-class DesignBenchOracleWrapper:
+class ForwardModel:
     """
-    Defines an oracle wrapper similar to the function wrapper at
-    https://github.com/siddarthk97/bonet/blob/main/utils/des_bench.py
-    with the oracle argument set to True and generalizing to any
-    design-bench task.
+    Implements a surrogate objective model using the BONET API. To avoid
+    needing to train another surrogate, the COMBO-SCR-associated surrogate is
+    used here instead.
     """
 
-    def __init__(self, task: design_bench.task.Task):
+    def __init__(
+        self,
+        task: design_bench.task.Task,
+        task_name: str,
+        device: torch.device = torch.device("cpu"),
+        **kwargs
+    ):
         """
         Args:
-            task: an offline model based optimization (MBO) task.
+            task: an offline model-based optimization (MBO) task.
+            task_name: the name of the offline MBO task.
+            device: device. Default CPU.
         """
-        self.task = task
-        self.optima = self.task.y.max()
+        self.task, self.task_name, self.device = task, task_name, device
+        self.vae, self.surrogate = load_vae_and_surrogate_models(
+            task=self.task, task_name=self.task_name, **kwargs
+        )
+        self.vae = self.vae.to(self.device)
+        self.surrogate = self.surrogate.to(self.device)
 
-    def __call__(
-        self, X: Union[np.ndarray, torch.Tensor]
-    ) -> Union[np.ndarray, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Predicts the objective function value using the oracle given an
-        input batch of designs.
+        Forward pass through the surrogate objective model.
         Input:
-            X: an input batch of designs.
+            x: an input design or batch of designs.
         Returns:
-            The objective function value for the designs using the oracle.
+            The predicted objective values associated with the input.
         """
-        if isinstance(X, np.ndarray):
-            return self.task.predict(X)
-        return from_numpy(self.task.predict(X.detach().cpu().numpy())).to(X)
+        z, _, _ = self.vae.encode(x.to(self.device))
+        if z.ndim > 2:
+            z = z.flatten(start_dim=1)
+        return self.surrogate(z)
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the surrogate objective model.
+        Input:
+            x: an input design or batch of designs.
+        Returns:
+            The predicted objective values associated with the input.
+        """
+        return self.forward(x)
 
     def regret(
-        self, X: Union[np.ndarray, torch.Tensor]
+        self, x: Union[np.ndarray, torch.Tensor]
     ) -> Union[np.ndarray, torch.Tensor]:
         """
-        Computes the regret using the oracle given an input batch of designs.
+        Computes the regret using the surrogate objective given an input
+        batch of designs.
         Input:
-            X: an input batch of designs.
+            x: an input batch of designs.
         Returns:
-            The regret for the designs according to the oracle.
+            The predicted regret for the input designs.
         """
-        return self.optima - self(X)
+        is_np = isinstance(x, np.ndarray)
+        x = torch.from_numpy(x) if is_np else x
+        y = self(x)
+        y = y.detach().cpu().numpy() if is_np else y
+        return self.task.y.max() - y
 
 
 def main():
@@ -469,7 +496,7 @@ def main():
         points, regrets = model.evaluate(
             rtg=args.cond_rtg,
             unroll_length=default_bonet_config["max_timestep"],
-            function=DesignBenchOracleWrapper(task),
+            function=ForwardModel(task, args.task),
             device=str(device),
             update_regret=True,
             initial_points=val.trajectories[traj_idx, :args.val_init_length],
