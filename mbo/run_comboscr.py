@@ -40,9 +40,13 @@ def main():
     device = get_device(args.device)
     seed_everything(args.seed)
     task = design_bench.make(args.task)
+
+    # Task-specific programming.
     is_conditional_optimization_task = (
         args.task in [os.environ["WARFARIN_TASK"]]
     )
+    if args.task == os.environ["CHEMBL_TASK"]:
+        task.map_normalize_y()
 
     with open("./mbo/hparams.json", "rb") as f:
         hparams = json.load(f)[args.task]
@@ -208,10 +212,11 @@ def main():
             os.path.join(args.logging_dir, "predictions.npy"),
             y.detach().cpu().numpy()
         )
-        np.save(
-            os.path.join(args.logging_dir, "scores.npy"),
-            y_gt.detach().cpu().numpy()
-        )
+        y_gt = y_gt.squeeze(dim=-1) if y_gt.ndim == 4 else y_gt
+        y_gt = y_gt.detach().cpu().numpy()
+        if task.is_normalized_y:
+            y_gt = task.denormalize_y(y_gt)
+        np.save(os.path.join(args.logging_dir, "scores.npy"), y_gt)
         logging.info(f"Saved experiments results to {args.logging_dir}")
 
 

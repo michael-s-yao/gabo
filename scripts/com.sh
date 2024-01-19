@@ -12,6 +12,13 @@ else
   EVALUATION_SAMPLES=8
 fi
 
+if [ "$TASK" = "$CHEMBL_TASK" ]
+then
+  DO_TASK_RELABEL="--no-task-relabel"
+else
+  DO_TASK_RELABEL="--task-relabel"
+fi
+
 main () {
   for SEED in 42 43 44 45 46; do
     python mbo/run_$METHOD.py \
@@ -21,6 +28,7 @@ main () {
       --particle-evaluate-gradient-steps $PARTICLE_GRADIENT_STEPS \
       --evaluation-samples $EVALUATION_SAMPLES \
       --logging-dir db-results/$METHOD-$TASK-$SEED \
+      $DO_TASK_RELABEL \
       --not-fast
   done
 }

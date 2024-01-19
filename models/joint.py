@@ -23,6 +23,7 @@ from typing import Any, Dict, Tuple, Union
 
 sys.path.append(".")
 from data.molecules.selfies import SELFIESDataset
+from data import SELFIESChEMBLDataset
 from models.fcnn import FCNN
 from models.vae import VAE, IdentityVAE
 from models.seqvae import SequentialVAE
@@ -57,8 +58,13 @@ class JointVAESurrogate(pl.LightningModule):
         ):
             self.vae = IdentityVAE(in_dim=self.task.input_shape[0], **kwargs)
             self.hparams.beta = 1.0
-        elif self.hparams.task_name == os.environ["MOLECULE_TASK"]:
-            _dataset = SELFIESDataset()
+        elif self.hparams.task_name in (
+            os.environ["MOLECULE_TASK"], os.environ["CHEMBL_TASK"]
+        ):
+            if self.hparams.task_name == os.environ["MOLECULE_TASK"]:
+                _dataset = SELFIESDataset()
+            elif self.hparams.task_name == os.environ["CHEMBL_TASK"]:
+                _dataset = SELFIESChEMBLDataset()
             self.vae = InfoTransformerVAE(
                 vocab2idx=_dataset.vocab2idx,
                 start=_dataset.start,

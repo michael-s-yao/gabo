@@ -22,11 +22,15 @@ import torchvision as thv
 import pytorch_lightning as pl
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
-from typing import Optional, Tuple, Union
+from typing import Optional, Sequence, Tuple, Union
 from botorch.test_functions.synthetic import Branin
+from deepchem.feat.smiles_tokenizer import SmilesTokenizer
+from design_bench.disk_resource import DiskResource
 from design_bench.datasets.discrete_dataset import DiscreteDataset
 from design_bench.datasets.continuous_dataset import ContinuousDataset
+from design_bench.datasets.discrete.chembl_dataset import ChEMBLDataset
 from design_bench.task import Task
+from design_bench.disk_resource import DATA_DIR
 
 sys.path.append(".")
 from data.conditional import ConditionalContinuousDataset
@@ -246,6 +250,140 @@ class PenalizedLogPDataset(DiscreteDataset):
         super(PenalizedLogPDataset, self).__init__(
             x, y, num_classes=self.data.vocab_size, **kwargs
         )
+
+
+class SELFIESChEMBLDataset(DiscreteDataset):
+    """
+    Defines the ChEMBL dataset using SELFIES molecule representations as
+    opposed to SMILES representations.
+
+    Citations(s):
+        [1] Krenn M, Hase F, Nigam AK, Friederich P, Aspuru-Guzik A. Self-
+            referencing embedded strings (SELFIES): A 100% robust molecular
+            string representation. Machine Learning: Science and Technology
+            1(4): 045024. (2020). https://doi.org/10.1088/2632-2153/aba947
+        [2] Gaulton A, Bellis LJ, Bento P, Chambers J, Davies M, Hersey A,
+            Light Y, McGlinchey S, Michalovich D, Al-Lazikani B, Overington JP.
+            ChEMBL: A large-scale bioactivity database for drug discovery.
+            Nucleic Acids Res 40:D1100-7. (2012). https://doi.org/10.1093/nar/
+            gkr777
+    """
+    def __init__(
+        self,
+        assay_chembl_id: str = "CHEMBL3885882",
+        standard_type: str = "MCHC",
+        **kwargs
+    ):
+        """
+        Args:
+            assay_chembl_id: the ChEMBL ID of the assay data to load.
+            standard_type: the property to optimize over.
+        """
+        # Download the original ChEMBL dataset in the SMILES representation.
+        x_shards = ChEMBLDataset.register_x_shards(
+            assay_chembl_id=assay_chembl_id, standard_type=standard_type
+        )
+        y_shards = ChEMBLDataset.register_y_shards(
+            assay_chembl_id=assay_chembl_id, standard_type=standard_type
+        )
+        for shard in (x_shards + y_shards):
+            if not shard.is_downloaded:
+                shard.download()
+        x = np.vstack([np.load(shard.disk_target) for shard in x_shards])
+        y = np.vstack([np.load(shard.disk_target) for shard in y_shards])
+        x_dtype = x.dtype
+
+        self.smiles_tokenizer = SmilesTokenizer(
+            os.path.join(DATA_DIR, "smiles_vocab.txt")
+        )
+        smiles_x = [
+            self.smiles_tokenizer.decode(toks).replace(" ", "") for toks in x
+        ]
+
+        # Remove the start tokens from the start of each SMILE string.
+        self.start = "[CLS]"
+        smiles_x = [
+            smi.replace(self.start, "", 1)
+            if smi.startswith(self.start) else smi
+            for smi in smiles_x
+        ]
+
+        # Remove the separating and padding tokens from each SMILE string.
+        self.stop, self.pad = "[SEP]", "[PAD]"
+        smiles_x = [
+            smi.replace(self.stop, "").replace(self.pad, "")
+            for smi in smiles_x
+        ]
+
+        # Convert each SMILE string into a list of SELFIES tokens.
+        selfies_x = [
+            list(filter(".".__ne__, list(sf.split_selfies(sf.encoder(smi)))))
+            for smi in smiles_x
+        ]
+
+        self.vocab2idx = {
+            tok: idx
+            for idx, tok in enumerate(
+                sorted(list(set(sum(selfies_x, [])))) + [
+                    self.start, self.stop, self.pad
+                ]
+            )
+        }
+        num_classes = len(self.vocab2idx.keys())
+
+        # Define the discrete input dataset in the SELFIES representation.
+        max_len = len(max(selfies_x, key=len))
+        selfies_x = [
+            [self.start] + self_mol + [self.stop] + (
+                [self.pad] * (max_len - len(self_mol))
+            )
+            for self_mol in selfies_x
+        ]
+        x = np.array([
+            [self.vocab2idx[tok] for tok in self_mol]
+            for self_mol in selfies_x
+        ])
+
+        super(SELFIESChEMBLDataset, self).__init__(
+            x.astype(x_dtype), y, num_classes=num_classes, **kwargs
+        )
+
+    def rebuild_dataset(
+        self,
+        x_shards: Union[
+            np.ndarray,
+            DiskResource,
+            Sequence[np.ndarray],
+            Sequence[DiskResource]
+        ],
+        y_shards: Union[
+            np.ndarray,
+            DiskResource,
+            Sequence[np.ndarray],
+            Sequence[DiskResource]
+        ],
+        visible_mask: np.ndarray
+    ) -> DiscreteDataset:
+        """
+        Initialize an MBO dataset and modify its distribution of designs and
+        predictions (if applicable).
+        Input:
+            x_shards: the shard(s) representing the input design values.
+            y_shards: the shard(s) representing the observed objective values.
+            visible_mask: a boolean mask specificying which samples are
+                visible in the provided dataset.
+        Returns:
+            A deep copy of the original dataset containing copies of all
+            statistics associated with this dataset.
+        """
+        dataset = super().rebuild_dataset(x_shards, y_shards, visible_mask)
+        # Copy over dataset-specific properties.
+        dataset.smiles_tokenizer = self.smiles_tokenizer
+        dataset.start = self.start
+        dataset.stop = self.stop
+        dataset.pad = self.pad
+        dataset.vocab2idx = self.vocab2idx
+        return dataset
 
 
 class WarfarinDosingDataset(ConditionalContinuousDataset):

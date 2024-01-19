@@ -1,4 +1,4 @@
-name: combo-scr
+name: gabo
 channels:
   - defaults
   - conda-forge
@@ -147,5 +147,5 @@ variables:
   TFBIND_TASK: TFBind8-Exact-v0
   GFP_TASK: GFP-Transformer-v0
   UTR_TASK: UTR-ResNet-v0
-  CHEMBL_TASK: ChEMBL_MCHC_CHEMBL3885882_MorganFingerprint-RandomForest-v0
-prefix: /home/usr/miniconda3/envs/combo-scr
+  CHEMBL_TASK: ChEMBL_MCHC_CHEMBL3885882_MorganFingerprint-RandomForest-v1
+prefix: /home/usr/miniconda3/envs/gabo

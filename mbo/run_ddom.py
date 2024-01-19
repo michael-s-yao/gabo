@@ -320,6 +320,8 @@ def ddom_train_surrogate(
     task = design_bench.make(task_name)
     if task.is_discrete:
         task.map_to_logits()
+    if task_name == os.environ["CHEMBL_TASK"]:
+        task.map_normalize_y()
 
     dm = RvSDataModule(
         task=task,
@@ -393,6 +395,8 @@ def ddom_train(
     is_conditional_task = task_name in [os.environ["WARFARIN_TASK"]]
     if task.is_discrete:
         task.map_to_logits()
+    if task_name == os.environ["CHEMBL_TASK"]:
+        task.map_normalize_y()
 
     if not os.path.isfile(
         os.path.join(ckpt_dir, f"ddom-{task_name}-surrogate.ckpt")
@@ -488,6 +492,8 @@ def ddom_eval(
     is_conditional_task = task_name in [os.environ["WARFARIN_TASK"]]
     if task.is_discrete:
         task.map_to_logits()
+    if task_name == os.environ["CHEMBL_TASK"]:
+        task.map_normalize_y()
 
     model_ckpt = os.path.join(ckpt_dir, f"ddom-{task_name}-{seed}.ckpt")
     if is_conditional_task:
@@ -544,6 +550,8 @@ def ddom_eval(
     designs = np.concatenate(designs, axis=0)
     scores = np.concatenate(scores, axis=0)
     preds = np.concatenate(preds, axis=0)
+    if task.is_normalized_y:
+        scores = task.denormalize_y(scores)
 
     # Save optimization results.
     if logging_dir is not None:

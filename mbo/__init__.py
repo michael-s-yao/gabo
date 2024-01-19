@@ -35,6 +35,7 @@ import design_bench
 import data
 from design_bench.datasets.continuous_dataset import ContinuousDataset
 from design_bench.datasets.discrete_dataset import DiscreteDataset
+from models.features import SELFIESMorganFingerprintFeatures
 from models.oracle import (
     BraninOracle, MNISTOracle, MoleculeOracle, WarfarinDosingOracle
 )
@@ -44,7 +45,8 @@ TASK_DATASETS = {
     os.environ["BRANIN_TASK"]: data.BraninDataset,
     os.environ["MNIST_TASK"]: data.MNISTIntensityDataset,
     os.environ["MOLECULE_TASK"]: data.PenalizedLogPDataset,
-    os.environ["WARFARIN_TASK"]: data.WarfarinDosingDataset,
+    os.environ["CHEMBL_TASK"]: data.SELFIESChEMBLDataset,
+    os.environ["WARFARIN_TASK"]: data.WarfarinDosingDataset
 }
 
 
@@ -135,12 +137,45 @@ def register(task_name: str) -> None:
         "max_percentile": 100.0,
         "min_percentile": 0.0
     }
+    oracle_kwargs = {}
+    oracle = lambda dataset: OracleWrapper(task_name, dataset)  # noqa
     if task_name == os.environ["BRANIN_TASK"]:
         dataset_kwargs["max_percentile"] = 80.0
     elif task_name == os.environ["MNIST_TASK"]:
         dataset_kwargs["root"] = "./data/mnist"
     elif task_name == os.environ["MOLECULE_TASK"]:
         dataset_kwargs["fname"] = "./data/molecules/val_selfie.gz"
+    elif task_name == os.environ["CHEMBL_TASK"]:
+        # Use the same dataset kwargs as in the original ChEMBL task
+        # specification.
+        dataset_kwargs["max_percentile"] = 40.0
+        dataset_kwargs.update({
+            "assay_chembl_id": "CHEMBL3885882", "standard_type": "MCHC"
+        })
+        # Use the same oracle kwargs as in the original ChEMBL task
+        # specification except with the SELFIESMorganFingerprintFeatures
+        # feature extractor instead.
+        oracle_kwargs = {
+            "noise_std": 0.0,
+            "max_samples": 2000,
+            "distribution": None,
+            "max_percentile": 100,
+            "min_percentile": 0,
+            "override_input_spec": True,
+            "feature_extractor": SELFIESMorganFingerprintFeatures(
+                dtype=np.int32
+            ),
+            "model_kwargs": {
+                "n_estimators": 100, "max_depth": 100, "max_features": "auto"
+            },
+            "split_kwargs": {
+                "val_fraction": 0.5,
+                "subset": None,
+                "shard_size": 50_000,
+                "to_disk": False
+            }
+        }
+        oracle = "design_bench.oracles.sklearn:RandomForestOracle"
     elif task_name == os.environ["WARFARIN_TASK"]:
         dataset_kwargs.update({
             "dir_name": "./data/warfarin",
@@ -151,8 +186,9 @@ def register(task_name: str) -> None:
     design_bench.register(
         task_name,
         TASK_DATASETS[task_name],
-        oracle=(lambda dataset: OracleWrapper(task_name, dataset)),
-        dataset_kwargs=dataset_kwargs
+        oracle=oracle,
+        dataset_kwargs=dataset_kwargs,
+        oracle_kwargs=oracle_kwargs
     )
     logging.info(f"Registered task {task_name}.")
     return
