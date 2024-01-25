@@ -3,6 +3,19 @@
 METHOD="grad"
 TASK=$1
 
+if [ "$TASK" = "$WARFARIN_TASK" ]
+then
+  PARTICLE_GRADIENT_STEPS=256
+  EVALUATION_SAMPLES=1
+elif [ "$TASK" = "$MOLECULE_TASK" ]
+then
+  PARTICLE_GRADIENT_STEPS=128
+  EVALUATION_SAMPLES=16
+else
+  PARTICLE_GRADIENT_STEPS=32
+  EVALUATION_SAMPLES=8
+fi
+
 main () {
   for AGGREGATION_METHOD in "None" "mean" "min"; do
     for SEED in 42 43 44 45 46; do
@@ -10,7 +23,9 @@ main () {
         --seed $SEED \
         --task $TASK \
         --logging-dir db-results/$METHOD-$AGGREGATION_METHOD-$TASK-$SEED \
-        --aggregation-method $AGGREGATION_METHOD
+        --aggregation-method $AGGREGATION_METHOD \
+        --particle-evaluate-gradient-steps $PARTICLE_GRADIENT_STEPS \
+        --evaluation-samples $EVALUATION_SAMPLES
     done
   done
 }

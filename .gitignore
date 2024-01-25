@@ -126,4 +126,5 @@ data/molecules/*.csv
 data/warfarin/*.xls
 
 db-results/
+npy/
 *.out

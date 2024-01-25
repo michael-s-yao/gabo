@@ -29,7 +29,7 @@ from typing import Callable, Optional, Sequence, Union
 sys.path.append(".")
 sys.path.append("ddom")
 sys.path.append("ddom/design_baselines/diff")
-import mbo  # noqa
+import mbo
 import design_bench
 from helpers import seed_everything, get_device
 from ddom.design_baselines.diff.trainer import RvSDataModule
@@ -392,7 +392,6 @@ def ddom_train(
         None.
     """
     task = design_bench.make(task_name)
-    is_conditional_task = task_name in [os.environ["WARFARIN_TASK"]]
     if task.is_discrete:
         task.map_to_logits()
     if task_name == os.environ["CHEMBL_TASK"]:
@@ -415,7 +414,7 @@ def ddom_train(
         temp="90"
     )
 
-    if is_conditional_task:
+    if task_name in mbo.CONDITIONAL_TASKS:
         model = ConditionalDiffusionTest(
             taskname=task_name,
             task=task,
@@ -489,14 +488,13 @@ def ddom_eval(
     """
     device = get_device(device)
     task = design_bench.make(task_name)
-    is_conditional_task = task_name in [os.environ["WARFARIN_TASK"]]
     if task.is_discrete:
         task.map_to_logits()
     if task_name == os.environ["CHEMBL_TASK"]:
         task.map_normalize_y()
 
     model_ckpt = os.path.join(ckpt_dir, f"ddom-{task_name}-{seed}.ckpt")
-    if is_conditional_task:
+    if task_name in mbo.CONDITIONAL_TASKS:
         model = ConditionalDiffusionTest.load_from_checkpoint(
             model_ckpt,
             taskname=task_name,

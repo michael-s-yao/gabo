@@ -29,8 +29,8 @@
     "verbose": true
   },
   "PenalizedLogP-Guacamol-v0": {
-    "batch_size": 16,
-    "budget": 256,
+    "batch_size": 64,
+    "budget": 2048,
     "z_bound": 8.0,
     "c": 0.01,
     "critic_lr": 1e-3,
@@ -156,6 +156,7 @@
     "norm_thresh": 0.1,
     "num_restarts": 10,
     "raw_samples": 256,
-    "verbose": true
+    "verbose": true,
+    "val_size": 200
   }
 }

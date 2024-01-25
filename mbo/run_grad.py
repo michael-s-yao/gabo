@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main driver program for baseline MBO methods.
+Main driver program for baseline gradient ascent MBO methods.
 
 Author(s):
     Michael Yao @michael-s-yao
@@ -20,12 +20,12 @@ from pathlib import Path
 from typing import Optional, Sequence, Union
 
 sys.path.append(".")
-import mbo  # noqa
+import mbo
 import design_bench
 from design_baselines.data import StaticGraphTask, build_pipeline
-from design_baselines.logger import Logger
 from design_baselines.gradient_ascent.trainers import MaximumLikelihood
 from design_baselines.gradient_ascent.nets import ForwardModel
+from models.logger import DummyLogger
 from helpers import seed_everything
 
 
@@ -64,6 +64,18 @@ def build_args() -> argparse.Namespace:
         default="None",
         choices=("None", "mean", "min"),
         help="Aggregation method. Default None."
+    )
+    parser.add_argument(
+        "--particle-evaluate-gradient-steps",
+        type=int,
+        default=32,
+        help="Number of gradient ascent steps to perform per sample."
+    )
+    parser.add_argument(
+        "--evaluation-samples",
+        type=int,
+        default=8,
+        help="Number of datums to perform gradient ascent from."
     )
 
     return parser.parse_args()
@@ -127,11 +139,14 @@ def gradient_ascent(
     Returns:
         None.
     """
-    logger = Logger(logging_dir)
+    logger = DummyLogger(logging_dir)
     task = StaticGraphTask(task_name, relabel=False)
 
+    # Task-specific setup.
     if task.is_discrete:
         task.map_to_logits()
+    if task_name == os.environ["CHEMBL_TASK"]:
+        task.map_normalize_y()
 
     # Make several keras neural networks with different architectures.
     num_models = 5
@@ -171,7 +186,7 @@ def gradient_ascent(
         trainer.launch(train, validate, logger=logger, epochs=num_epochs)
 
     # Select the top k initial designs from the dataset as starting points.
-    if task_name == os.environ["WARFARIN_TASK"]:
+    if task_name in mbo.CONDITIONAL_TASKS:
         X = tf.concat([x for x, _ in validate], axis=0)
         solver_steps = solver_steps * solver_samples
     else:
@@ -223,6 +238,8 @@ def main():
     args = vars(build_args())
     seed_everything(seed=args.pop("seed"))
     args["task_name"] = args.pop("task")
+    args["solver_steps"] = args.pop("particle_evaluate_gradient_steps")
+    args["solver_samples"] = args.pop("evaluation_samples")
     gradient_ascent(**args)
 
 

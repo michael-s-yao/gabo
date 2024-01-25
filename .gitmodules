@@ -7,3 +7,9 @@
 [submodule "ddom"]
 	path = ddom
 	url = https://github.com/siddarthk97/ddom.git
+[submodule "RoMA"]
+	path = RoMA
+	url = https://github.com/sihyun-yu/RoMA.git
+[submodule "BDI"]
+	path = BDI
+	url = https://github.com/GGchen1997/BDI.git

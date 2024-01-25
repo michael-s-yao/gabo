@@ -76,7 +76,11 @@ class OracleWrapper:
             The values of the oracle for each input design.
         """
         if self.task_name == os.environ["MOLECULE_TASK"]:
-            if issubclass(x.dtype.type, np.floating):
+            if hasattr(x.dtype, "type") and issubclass(
+                x.dtype.type, np.floating
+            ):
+                x = self.dataset.to_integers(x)
+            elif isinstance(x.dtype, (np.float32, np.float64)):
                 x = self.dataset.to_integers(x)
             x = x[np.newaxis, ...] if x.ndim == 1 else x
             y = np.array([
@@ -196,3 +200,6 @@ def register(task_name: str) -> None:
 
 for task_name in TASK_DATASETS.keys():
     register(task_name)
+
+# A list specificying all of the conditional MBO tasks.
+CONDITIONAL_TASKS = [os.environ["WARFARIN_TASK"]]

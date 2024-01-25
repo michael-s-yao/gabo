@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Implementation of conservative offline model-based optimization over latent
-spaces via source critic regularization (COMBO-SCR). Our method estimates the
-Lagrange multiplier through solving the dual problem of the primal optimization
-task.
+Implementation of offline Generative Adversarial Bayesian Optimization (GABO)
+with optional Adaptive SCR. Our method estimates the Lagrange multiplier
+of a regularized optimization problem through solving the dual problem of the
+constrained primal optimization task.
 
 Author(s):
     Michael Yao @michael-s-yao
@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Union
 
 sys.path.append(".")
-import mbo  # noqa
+import mbo
 import data
 import design_bench
 from mbo.args import build_args
@@ -42,9 +42,6 @@ def main():
     task = design_bench.make(args.task)
 
     # Task-specific programming.
-    is_conditional_optimization_task = (
-        args.task in [os.environ["WARFARIN_TASK"]]
-    )
     if args.task == os.environ["CHEMBL_TASK"]:
         task.map_normalize_y()
 
@@ -67,8 +64,8 @@ def main():
     else:
         bounds = torch.tensor(z_bound, device=device)
 
-    if is_conditional_optimization_task:
-        val_size = 200
+    val_size = hparams.get("val_size", 1)
+    if args.task in mbo.CONDITIONAL_TASKS:
         bounds = torch.hstack([
             torch.from_numpy(task.dataset.opt_dim_bounds).to(device),
             bounds
@@ -99,7 +96,6 @@ def main():
         )
         conditions = validate.x
     else:
-        val_size = 1
         policy = COMBOSCRPolicy(
             args.task,
             vae.latent_size,
@@ -131,7 +127,7 @@ def main():
         policy.wasserstein(z_ref.detach(), z.detach()).unsqueeze(dim=-1)
     )
     X = vae.sample(z=z).detach().cpu().numpy()
-    if is_conditional_optimization_task:
+    if args.task in mbo.CONDITIONAL_TASKS:
         y_gt = np.concatenate(
             [task.predict(x)[np.newaxis, :] for x in X], axis=0
         )
@@ -139,11 +135,11 @@ def main():
     else:
         y_gt = torch.from_numpy(task.predict(X)).unsqueeze(dim=-1).to(device)
     y, y_gt = y.unsqueeze(dim=1), y_gt.unsqueeze(dim=1)
-    if is_conditional_optimization_task:
+    if args.task in mbo.CONDITIONAL_TASKS:
         z = z.unsqueeze(dim=1)
 
     for step in range(math.ceil(budget / batch_size) - 1):
-        if is_conditional_optimization_task:
+        if args.task in mbo.CONDITIONAL_TASKS:
             policy.fit(
                 z.reshape(val_size, -1, z.size(dim=-1)).detach(),
                 y.reshape(val_size, -1, 1).detach()
@@ -152,7 +148,7 @@ def main():
             policy.fit(z.detach(), y.flatten().unsqueeze(dim=-1).detach())
 
         # Optimize and get new observations.
-        if is_conditional_optimization_task:
+        if args.task in mbo.CONDITIONAL_TASKS:
             new_z = torch.from_numpy(validate.x).unsqueeze(dim=1).repeat(
                 1, batch_size, 1
             )
@@ -173,7 +169,7 @@ def main():
             )
         )
         new_X = vae.sample(z=new_z).detach().cpu().numpy()
-        if is_conditional_optimization_task:
+        if args.task in mbo.CONDITIONAL_TASKS:
             new_gt = np.concatenate(
                 [task.predict(x)[np.newaxis, :] for x in new_X], axis=0
             )
@@ -184,7 +180,7 @@ def main():
         new_y, new_gt = new_y.unsqueeze(dim=1), new_gt.unsqueeze(dim=1)
 
         # Update training points.
-        if is_conditional_optimization_task:
+        if args.task in mbo.CONDITIONAL_TASKS:
             z = torch.cat((z, new_z.unsqueeze(dim=1)), dim=1)
         else:
             z = torch.cat((z, new_z), dim=0)
@@ -202,7 +198,7 @@ def main():
     if args.logging_dir is not None:
         os.makedirs(args.logging_dir, exist_ok=True)
         X = vae.sample(z=z)
-        if not is_conditional_optimization_task:
+        if args.task not in mbo.CONDITIONAL_TASKS:
             X = X.reshape(y.size(dim=0), y.size(dim=1), X.size(dim=-1))
         np.save(
             os.path.join(args.logging_dir, "solution.npy"),

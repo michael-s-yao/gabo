@@ -38,6 +38,7 @@ from bonet.mingpt.model import GPT, GPTConfig
 from bonet.mingpt.model_discrete_new import GPTDiscrete
 from bonet.mingpt.model_discrete_new import GPTConfig as GPTConfigDiscrete
 from bonet.mingpt.trainer import Trainer, TrainerConfig
+from models.logger import DummyLogger
 from helpers import seed_everything, get_device
 
 
@@ -338,27 +339,6 @@ class PointRegretDataset(torch.utils.data.Dataset):
         )
 
 
-class DummyWriter:
-    """Defines a dummy logging class."""
-
-    def __init__(self, *args, **kwargs):
-        """
-        Args:
-            None.
-        """
-        return  # Do nothing.
-
-    def add_scalar(self, *args, **kwargs) -> None:
-        """
-        Adds a scalar to the log.
-        Input:
-            None.
-        Returns:
-            None.
-        """
-        return  # Do nothing.
-
-
 class ForwardModel:
     """
     Implements a surrogate objective model using the BONET API. To avoid
@@ -480,7 +460,7 @@ def main():
             TrainerConfig(**tconfig),
             add_noise=False
         )
-        trainer.train(writer=DummyWriter())
+        trainer.train(writer=DummyLogger())
     if args.mode == "train":
         return
 

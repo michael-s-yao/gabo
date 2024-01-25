@@ -1,6 +1,6 @@
 #!/bin/bash
 
-METHOD="comboscr"
+METHOD="gabo"
 TASK=$1
 DEVICE="cuda:0"
 

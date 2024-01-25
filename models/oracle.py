@@ -279,7 +279,9 @@ class WarfarinDosingOracle:
         X = X.copy()
         for col_name, transform in self.transform.transforms.items():
             idx = self.column_names.index(col_name)
-            X[:, idx] = transform.inverse_transform(X[:, idx])
+            X[:, idx] = np.squeeze(
+                transform.inverse_transform(X[:, idx].reshape(-1, 1)), axis=-1
+            )
         gt_dose = self._dosing_algorithm(
             pd.DataFrame(X, columns=self.column_names), self.algorithm
         )

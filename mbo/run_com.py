@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 sys.path.append(".")
-import mbo  # noqa
+import mbo
 from design_baselines.coms_cleaned import coms_cleaned
 from design_baselines.data import StaticGraphTask, build_pipeline
 from design_baselines.logger import Logger
@@ -208,7 +208,7 @@ def coms_partial(
 
 def main():
     seed_everything(seed=pop_seed())
-    if get_task_name() == os.environ["WARFARIN_TASK"]:
+    if get_task_name() in mbo.CONDITIONAL_TASKS:
         coms_partial()
     else:
         coms_cleaned()
