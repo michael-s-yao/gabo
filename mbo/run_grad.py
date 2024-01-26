@@ -104,7 +104,7 @@ def reduce_preds(
 
 def gradient_ascent(
     task_name: str,
-    logging_dir: Union[Path, str],
+    logging_dir: Optional[Union[Path, str]] = None,
     aggregation_method: Optional[str] = None,
     num_epochs: int = 100,
     batch_size: int = 128,
@@ -229,9 +229,11 @@ def gradient_ascent(
         all_X = task.to_integers(all_X)
 
     # Save the optimization results.
-    np.save(os.path.join(logging_dir, "solution.npy"), all_X)
-    np.save(os.path.join(logging_dir, "predictions.npy"), preds)
-    np.save(os.path.join(logging_dir, "scores.npy"), scores)
+    if logging_dir is not None:
+        os.makedirs(logging_dir, exist_ok=True)
+        np.save(os.path.join(logging_dir, "solution.npy"), all_X)
+        np.save(os.path.join(logging_dir, "predictions.npy"), preds)
+        np.save(os.path.join(logging_dir, "scores.npy"), scores)
 
 
 def main():

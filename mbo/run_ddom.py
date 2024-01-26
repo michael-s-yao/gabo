@@ -67,6 +67,9 @@ def build_args() -> argparse.Namespace:
         help="Logging directory to save optimization results to."
     )
     parser.add_argument(
+        "--budget", type=int, default=256, help="Query budget. Default 256."
+    )
+    parser.add_argument(
         "--hidden-size",
         type=int,
         default=2048,
@@ -528,26 +531,25 @@ def ddom_eval(
     grad_mask = None
     if hasattr(task.dataset, "grad_mask"):
         grad_mask = torch.from_numpy(task.dataset.grad_mask).to(device)
-    for X in heun_sampler(
+
+    diffusion = heun_sampler(
         task,
         model,
         num_samples=num_samples,
         num_steps=num_steps,
         device=device,
         grad_mask=grad_mask
-    ):
-        if X.isnan().any():
-            continue
-        designs.append(X.cpu().numpy()[np.newaxis, ...])
+    )
+    idx = -1
+    while diffusion[idx].isnan().any():
+        idx -= 1
+    X = diffusion[idx]
+    if task.is_discrete:
+        X = X.view(X.size(0), -1, task.x.shape[-1])
 
-        if task.is_discrete:
-            X = X.view(X.size(0), -1, task.x.shape[-1])
-
-        scores.append(task.predict(X.cpu().numpy())[np.newaxis, ...])
-        preds.append(surrogate.mlp(X).cpu().numpy()[np.newaxis, ...])
-    designs = np.concatenate(designs, axis=0)
-    scores = np.concatenate(scores, axis=0)
-    preds = np.concatenate(preds, axis=0)
+    designs = X.cpu().numpy()[np.newaxis, ...]
+    scores = task.predict(X.cpu().numpy())[np.newaxis, ...]
+    preds = surrogate.mlp(X).cpu().numpy()[np.newaxis, ...]
     if task.is_normalized_y:
         scores = task.denormalize_y(scores)
 
@@ -574,6 +576,7 @@ def main():
         args.task,
         logging_dir=args.logging_dir,
         hidden_size=args.hidden_size,
+        num_samples=args.budget,
         device=args.device,
         seed=args.seed
     )

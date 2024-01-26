@@ -27,3 +27,13 @@ class DummyLogger:
             None.
         """
         return  # Do nothing.
+
+    def record(self, *args, **kwargs) -> None:
+        """
+        Records input information to the log.
+        Input:
+            None.
+        Returns:
+            None.
+        """
+        return  # Do nothing.

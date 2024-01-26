@@ -338,6 +338,9 @@ def build_args() -> argparse.Namespace:
         "--task", type=str, required=True, help="Name of offline MBO task."
     )
     parser.add_argument(
+        "--budget", type=int, default=256, help="Query budget. Default 256."
+    )
+    parser.add_argument(
         "--seeds",
         type=int,
         nargs="+",

@@ -33,7 +33,7 @@ sys.path.append(".")
 sys.path.append("bonet")
 import mbo  # noqa
 import design_bench
-from mbo.run_comboscr import load_vae_and_surrogate_models
+from mbo.run_gabo import load_vae_and_surrogate_models
 from bonet.mingpt.model import GPT, GPTConfig
 from bonet.mingpt.model_discrete_new import GPTDiscrete
 from bonet.mingpt.model_discrete_new import GPTConfig as GPTConfigDiscrete

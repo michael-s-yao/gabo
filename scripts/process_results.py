@@ -42,6 +42,9 @@ def parse_subdir_name(subdir: str) -> Experiment:
     """
     id_ = subdir.rsplit("-", 1)[0]
     method, subdir = subdir.split("-", 1)
+    if any([subdir.startswith(x) for x in ["None", "mean", "min"]]):
+        id_suffix, subdir = subdir.split("-", 1)
+        id_ = id_ + "-" + id_suffix
     task_name = ""
     while design_bench.registration.TASK_PATTERN.search(task_name) is None:
         suffix, subdir = subdir.split("-", 1)
@@ -73,6 +76,20 @@ def build_args() -> argparse.Namespace:
         default="./db-results",
         help="Path to the results directory. Default `./db-results`."
     )
+    parser.add_argument(
+        "--method",
+        type=str,
+        nargs="+",
+        default="all",
+        help="Optional MBO algorithms to filter by. Default all shown."
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        nargs="+",
+        default="all",
+        help="Optional MBO tasks to filter by. Default all shown."
+    )
     return parser.parse_args()
 
 
@@ -84,6 +101,11 @@ def main():
     for subdir in os.listdir(args.results_dir):
         exp = parse_subdir_name(subdir)
 
+        if args.method != "all" and exp.method not in args.method:
+            continue
+        if args.task != "all" and exp.task_name not in args.task:
+            continue
+
         designs = np.load(
             os.path.join(args.results_dir, subdir, "solution.npy")
         )
@@ -93,10 +115,6 @@ def main():
         scores = np.load(
             os.path.join(args.results_dir, subdir, "scores.npy")
         )
-        if exp.method == "ddom":
-            designs = designs[-1, :, :]
-            preds = preds[-1, :, :]
-            scores = scores[-1, :, :]
         designs = designs.reshape(-1, designs.shape[-1])
         preds = preds.flatten()
         scores = scores.flatten()
@@ -108,12 +126,8 @@ def main():
                 preds = np.where(designs[:, dim] < bounds[0, dim], ninf, preds)
                 preds = np.where(designs[:, dim] > bounds[1, dim], ninf, preds)
         elif exp.task_name == os.environ["MNIST_TASK"]:
-            preds = np.where(
-                np.any(designs[:, dim] < 0.0, axis=-1), ninf, preds
-            )
-            preds = np.where(
-                np.any(designs[:, dim] > 1.0, axis=-1), ninf, preds
-            )
+            preds = np.where(np.any(designs < 0.0, axis=-1), ninf, preds)
+            preds = np.where(np.any(designs > 1.0, axis=-1), ninf, preds)
         elif exp.task_name.endswith(os.environ["CHEMBL_TASK"]):
             _, standard_type, assay_chembl_id, _ = exp.task_name.split("_")
             y_shards = ChEMBLDataset.register_y_shards(
@@ -126,7 +140,7 @@ def main():
         results[exp.id_] += scores[idxs[-args.top_k:]].tolist()
 
     results = {
-        key: f"{np.mean(val)} +/- {np.std(val)}"
+        key: f"{np.nanmean(val)} +/- {np.nanstd(val)}"
         for key, val in results.items()
     }
     for key in sorted(list(results.keys())):

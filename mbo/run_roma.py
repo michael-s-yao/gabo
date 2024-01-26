@@ -185,6 +185,9 @@ def build_args() -> argparse.Namespace:
         default="./db-results",
         help="Logging directory. Default `./db-results`"
     )
+    parser.add_argument(
+        "--budget", type=int, default=256, help="Query budget. Default 256."
+    )
 
     return parser.parse_args()
 
@@ -192,7 +195,7 @@ def build_args() -> argparse.Namespace:
 def main():
     args = build_args()
     seed_everything(args.seed)
-    safeweight(args.task, args.logging_dir)
+    safeweight(args.task, args.logging_dir, sol_x_samples=args.budget)
 
 
 if __name__ == "__main__":
