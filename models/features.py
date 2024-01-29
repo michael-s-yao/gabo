@@ -3,7 +3,7 @@ Implements a molecule fingerprints feature extractor for tokenized molecules
 in the SELFIES representation space.
 
 Author(s):
-    Michael Yao
+    Michael Yao @michael-s-yao
 
 Citation(s):
     [1] Krenn M, Hase F, Nigam AK, Friederich P, Aspuru-Guzik A. Self-
@@ -15,7 +15,7 @@ Adapted from the @design-bench GitHub repository from @rail-berkeley at
 https://github.com/rail-berkeley/design-bench/design_bench/oracles/
 feature_extractors/morgan_fingerprint_features.py
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import sys
 import numpy as np

@@ -14,7 +14,7 @@ Adapted from the design-baselines GitHub repo from @brandontrabucco at
 https://github.com/brandontrabucco/design-baselines/design_baselines/
 coms_cleaned/__init__.py
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import click
 import numpy as np

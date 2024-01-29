@@ -13,7 +13,7 @@ Citation(s):
 Adapted from the ddom GitHub repo by @siddarthk97 at https://github.com/
 siddarthk97/ddom/blob/main/design_baselines/diff/trainer.py
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import argparse
 import logging

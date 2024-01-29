@@ -16,7 +16,7 @@ siddarthk97/bonet. Specifically, the relevant source code files are:
     [2] bonet/scripts/train_desbench_new.py
     [3] bonet/scripts/test_desbench_new.py
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import argparse
 import logging
@@ -342,7 +342,7 @@ class PointRegretDataset(torch.utils.data.Dataset):
 class ForwardModel:
     """
     Implements a surrogate objective model using the BONET API. To avoid
-    needing to train another surrogate, the COMBO-SCR-associated surrogate is
+    needing to train another surrogate, the GABO-associated surrogate is
     used here instead.
     """
 

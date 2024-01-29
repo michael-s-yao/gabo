@@ -13,7 +13,7 @@ Citation(s):
 Adapted from the RoMA GitHub repo from @sihyun-yu at https://github.com/
 sihyun-yu/RoMA
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import argparse
 import os
@@ -95,7 +95,10 @@ def safeweight(
     else:
         x = task.x
 
-    top_idxs = tf.math.top_k(task.y.squeeze(axis=-1), k=sol_x_samples)[1]
+    top_idxs = tf.math.top_k(
+        task.y.squeeze(axis=-1), k=min(sol_x_samples, task.y.shape[0])
+    )
+    top_idxs = top_idxs[1]
     x, y = tf.gather(x, top_idxs, axis=0), tf.gather(task.y, top_idxs, axis=0)
     x, y = x.numpy(), y.numpy()
 
@@ -142,7 +145,7 @@ def safeweight(
             )
     x, ypred = trainer.get_sol_x().numpy(), trainer.sol_y.numpy()
     if task.wrapped_task.is_discrete:
-        x = x.reshape(sol_x_samples, -1, task.wrapped_task.num_classes)
+        x = x.reshape(x.shape[0], -1, task.wrapped_task.num_classes)
         x = tf.argmax(tf.math.softmax(tf.convert_to_tensor(x)), axis=-1)
         x = x.numpy().astype(np.int32)
     y = task.wrapped_task.predict(x)

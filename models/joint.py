@@ -11,7 +11,7 @@ Citation(s):
         continuous representation of molecules. ACS Cent Sci 4(2): 268-76.
         (2018). https://doi.org/10.1021/acscentsci.7b00572
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import os
 import sys

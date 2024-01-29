@@ -2,9 +2,9 @@
 Experimental results parsing script and associated helper functions.
 
 Author(s):
-    Michael Yao
+    Michael Yao @michael-s-yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import argparse
 import os
@@ -64,9 +64,7 @@ def build_args() -> argparse.Namespace:
     Returns:
         A namespace containing the relevant argument values.
     """
-    parser = argparse.ArgumentParser(
-        description="COMBO-SCR Experimental Analysis"
-    )
+    parser = argparse.ArgumentParser(description="Experiment Analysis Script")
     parser.add_argument(
         "--top-k", type=int, required=True, help="Top k values to report."
     )
@@ -79,16 +77,14 @@ def build_args() -> argparse.Namespace:
     parser.add_argument(
         "--method",
         type=str,
-        nargs="+",
         default="all",
-        help="Optional MBO algorithms to filter by. Default all shown."
+        help="Optional MBO algorithm to filter by. Default all shown."
     )
     parser.add_argument(
         "--task",
         type=str,
-        nargs="+",
         default="all",
-        help="Optional MBO tasks to filter by. Default all shown."
+        help="Optional MBO task to filter by. Default all shown."
     )
     return parser.parse_args()
 
@@ -98,12 +94,12 @@ def main():
 
     results = defaultdict(lambda: [])
     ninf = -1e12
-    for subdir in os.listdir(args.results_dir):
+    for subdir in sorted(os.listdir(args.results_dir)):
         exp = parse_subdir_name(subdir)
 
-        if args.method != "all" and exp.method not in args.method:
+        if args.method != "all" and args.method not in exp.method:
             continue
-        if args.task != "all" and exp.task_name not in args.task:
+        if args.task != "all" and args.task not in exp.task_name:
             continue
 
         designs = np.load(
@@ -115,6 +111,21 @@ def main():
         scores = np.load(
             os.path.join(args.results_dir, subdir, "scores.npy")
         )
+        if os.environ["WARFARIN_TASK"] in exp.task_name and any([
+            method in exp.method for method in ["com", "grad"]
+        ]):
+            for i in range(preds.shape[1]):
+                idxs = np.argsort(preds[:, i, 0])
+                results[exp.id_] += scores[idxs[-args.top_k:], i, 0].tolist()
+            continue
+        elif os.environ["WARFARIN_TASK"] in exp.task_name and (
+            "gabo" in exp.method
+        ):
+            for i in range(preds.shape[0]):
+                idxs = np.argsort(preds[i].flatten())
+                y = scores[i].flatten()[idxs[-args.top_k:]]
+                results[exp.id_] += y.tolist()
+            continue
         designs = designs.reshape(-1, designs.shape[-1])
         preds = preds.flatten()
         scores = scores.flatten()

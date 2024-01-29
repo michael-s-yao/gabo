@@ -1,13 +1,12 @@
 """
-Implements the sampler policy for conservative offline model-based
-optimization over latent spaces via source critic regularization (COMBO-SCR)
-over a conditioned design space whereby some input design dimensions are
+Implements the sampler policy for Generative Adversarial Bayesian Optimization
+(GABO) over a conditioned design space whereby some input design dimensions are
 optimized over and others are treated as frozen condition attributes.
 
 Author(s):
     Michael Yao @michael-s-yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import numpy as np
 import sys
@@ -25,10 +24,10 @@ from gpytorch.mlls.exact_marginal_log_likelihood import (
 from typing import Optional
 
 sys.path.append(".")
-from models.policy import COMBOSCRPolicy
+from models.policy import GABOPolicy
 
 
-class ConditionalCOMBOSCRPolicy(COMBOSCRPolicy):
+class ConditionalGABOPolicy(GABOPolicy):
     def __init__(
         self,
         grad_mask: np.ndarray,
@@ -86,7 +85,7 @@ class ConditionalCOMBOSCRPolicy(COMBOSCRPolicy):
             patience: patience used for source critic training. Default 100.
             verbose: whether to print verbose outputs to `stdout`.
         """
-        super(ConditionalCOMBOSCRPolicy, self).__init__(
+        super(ConditionalGABOPolicy, self).__init__(
             task_name=task_name,
             z_dim=z_dim,
             bounds=bounds,

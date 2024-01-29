@@ -2,9 +2,9 @@
 Defines the building blocks for the FCNN and CNN model architectures.
 
 Author(s):
-    Michael Yao
+    Michael Yao @michael-s-yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import torch
 import torch.nn as nn

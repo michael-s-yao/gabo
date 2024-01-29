@@ -11,7 +11,7 @@ Citations(s):
         representation. Machine Learning: Science and Technology 1(4): 045024.
         (2020). https://doi.org/10.1088/2632-2153/aba947
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import gzip
 import os

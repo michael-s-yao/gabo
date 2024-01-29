@@ -1,13 +1,13 @@
 """
-Sampler policy for conservative offline model-based optimization over latent
-spaces via source critic regularization (COMBO-SCR). Our method estimates the
-Lagrange multiplier through solving the dual problem of the primal optimization
-task.
+Sampler policy for Generative Adversarial Bayesian Optimization (GABO). Our
+method estimates the Lagrange multiplier through solving the dual problem
+of the primal optimization task in order to constrain the Bayesian Optimization
+trajectory via a source critic agent.
 
 Author(s):
     Michael Yao @michael-s-yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import numpy as np
 import os
@@ -32,7 +32,7 @@ from models.fcnn import FCNN
 from models.clamp import WeightClipper
 
 
-class COMBOSCRPolicy:
+class GABOPolicy:
     def __init__(
         self,
         task_name: str,

@@ -13,7 +13,7 @@ Citation(s):
         Local latent space Bayesian optimization over structured inputs.
         Proc NeurIPS. (2022). https://doi.org/10.48550/arXiv.2201.11872
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import sys
 import torch

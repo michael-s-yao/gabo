@@ -2,12 +2,12 @@
 Defines and implements a fully-connected VAE model.
 
 Author(s):
-    Michael Yao
+    Michael Yao @michael-s-yao
 
 Adapted from the @pytorch examples GitHub repository at
 https://github.com/pytorch/examples/blob/main/vae/main.py
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import torch
 import torch.nn as nn

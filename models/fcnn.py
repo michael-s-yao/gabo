@@ -2,9 +2,9 @@
 Implements a simple fully connected neural net (FCNN) model.
 
 Author(s):
-    Michael Yao
+    Michael Yao @michael-s-yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import torch
 import torch.nn as nn

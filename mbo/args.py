@@ -4,7 +4,7 @@ Defines the experimental arguments for offline MBO baseline method evaluation.
 Author(s):
     Michael Yao @michael-s-yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import argparse
 import design_bench

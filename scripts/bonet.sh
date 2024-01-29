@@ -3,13 +3,7 @@
 METHOD="bonet"
 TASK=$1
 MODE="both"
-
-if [ "$TASK" = "$MOLECULE_TASK" ]
-then
-  BUDGET=2048
-else
-  BUDGET=256
-fi
+BUDGET=2048
 
 main () {
   for SEED in 42 43 44 45 46; do

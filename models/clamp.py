@@ -2,14 +2,14 @@
 Implements a method for weight clamping of neural nets.
 
 Author(s):
-    Michael Yao
+    Michael Yao @michael-s-yao
 
 Citation(s):
     [1] Arjovsky M, Chintala S, Bottou L. Wasserstein generative adversarial
         networks. Proc ICML. PMLR 70:214-23. (2017). https://proceedings.mlr.
         press/v70/arjovsky17a.html
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import torch.nn as nn
 

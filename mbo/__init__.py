@@ -9,7 +9,7 @@ Citation(s):
         data-driven offline model-based optimization. Proc ICML 162: 21658-76.
         (2022). https://proceedings.mlr.press/v162/trabucco22a.html
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import os
 import numpy as np

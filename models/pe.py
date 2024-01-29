@@ -4,7 +4,7 @@ Defines and implements a positional encoder module for 1D sequences.
 Author(s):
     Michael Yao @michael-s-yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import math
 import torch

@@ -4,7 +4,7 @@ Miscellaneous utility functions.
 Author(s):
     Michael Yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import matplotlib
 import numpy as np

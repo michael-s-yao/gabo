@@ -4,7 +4,7 @@ Defines a dummy logging class compatible with MBO logging APIs.
 Author(s):
     Michael Yao @michael-s-yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 
 

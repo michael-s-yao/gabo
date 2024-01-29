@@ -7,7 +7,7 @@ Author(s):
 Data preprocessing logic adapted from @gianlucatruda at
 https://github.com/gianlucatruda/warfit-learn/tree/master
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import json
 import numpy as np

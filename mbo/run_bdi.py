@@ -14,7 +14,7 @@ Citation(s):
 Adapted from the BDI GitHub repo from @GGchen1997 at https://github.com/
 GGchen1997/BDI
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import argparse
 import functools

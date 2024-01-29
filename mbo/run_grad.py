@@ -9,7 +9,7 @@ Adapted from the design-baselines GitHub repo from @brandontrabucco.
 https://github.com/brandontrabucco/design-baselines/design_baselines/
 gradient_ascent/__init__.py
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import argparse
 import numpy as np

@@ -8,7 +8,7 @@ constrained primal optimization task.
 Author(s):
     Michael Yao @michael-s-yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import json
 import logging
@@ -29,8 +29,8 @@ import mbo
 import data
 import design_bench
 from mbo.args import build_args
-from models.policy import COMBOSCRPolicy
-from models.cpolicy import ConditionalCOMBOSCRPolicy
+from models.policy import GABOPolicy
+from models.cpolicy import ConditionalGABOPolicy
 from models.joint import JointVAESurrogate
 from helpers import get_device, seed_everything
 
@@ -81,7 +81,7 @@ def main():
         continuous_condition_idxs = np.squeeze(
             continuous_condition_idxs, axis=-1
         )
-        policy = ConditionalCOMBOSCRPolicy(
+        policy = ConditionalGABOPolicy(
             task.dataset.grad_mask,
             args.task,
             vae.latent_size,
@@ -96,7 +96,7 @@ def main():
         )
         conditions = validate.x
     else:
-        policy = COMBOSCRPolicy(
+        policy = GABOPolicy(
             args.task,
             vae.latent_size,
             bounds,

@@ -7,7 +7,7 @@ Author(s):
 Adapted from the design-baselines GitHub repository by @brandontrabucco at
 https://github.com/brandontrabucco/design-baselines
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import sys
 import torch

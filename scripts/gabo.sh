@@ -2,7 +2,7 @@
 
 METHOD="gabo"
 TASK=$1
-DEVICE="cuda:0"
+DEVICE=$2
 
 run () {
   if [ -z "$1" ]

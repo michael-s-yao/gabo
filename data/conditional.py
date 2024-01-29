@@ -6,7 +6,7 @@ optimized over.
 Author(s):
     Michael Yao @michael-s-yao
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import numpy as np
 from design_bench.datasets.continuous_dataset import ContinuousDataset

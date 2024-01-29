@@ -2,7 +2,7 @@
 Defines the oracle objective for the Branin toy task.
 
 Author(s):
-    Michael Yao
+    Michael Yao @michael-s-yao
 
 Citation(s):
     [1] Branin FH. Widely convergent method for finding multiple solutions of
@@ -18,7 +18,7 @@ Citation(s):
         the warfarin dose with clinical and pharmacogenetic data. N Engl J Med
         360:753-64. (2009). https://doi.org/10.1056/NEJMoa0809329
 
-Licensed under the MIT License. Copyright University of Pennsylvania 2023.
+Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import matplotlib.pyplot as plt
 import networkx as nx
