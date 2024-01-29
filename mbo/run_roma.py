@@ -43,7 +43,7 @@ def safeweight(
     num_updates: int = 500,
     model_hidden_size: int = 64,
     model_lr: float = 1e-3,
-    sol_x_samples: int = 256,
+    sol_x_samples: int = 2048,
     sol_x_lr: float = 2e-3,
     discrete_smoothing: float = 0.4,
     continuous_noise_std: float = 0.2,
@@ -189,7 +189,7 @@ def build_args() -> argparse.Namespace:
         help="Logging directory. Default `./db-results`"
     )
     parser.add_argument(
-        "--budget", type=int, default=256, help="Query budget. Default 256."
+        "--budget", type=int, default=2048, help="Query budget. Default 2048."
     )
 
     return parser.parse_args()

@@ -67,7 +67,7 @@ def build_args() -> argparse.Namespace:
         help="Logging directory to save optimization results to."
     )
     parser.add_argument(
-        "--budget", type=int, default=256, help="Query budget. Default 256."
+        "--budget", type=int, default=2048, help="Query budget. Default 2048."
     )
     parser.add_argument(
         "--hidden-size",
@@ -465,7 +465,7 @@ def ddom_eval(
     task_name: str,
     ckpt_dir: Union[Path, str] = "./checkpoints",
     logging_dir: Optional[Union[Path, str]] = None,
-    num_samples: int = 256,
+    num_samples: int = 2048,
     num_steps: int = 1000,
     hidden_size: int = 2048,
     seed: int = 42,

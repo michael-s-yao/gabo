@@ -68,13 +68,13 @@ def build_args() -> argparse.Namespace:
     parser.add_argument(
         "--particle-evaluate-gradient-steps",
         type=int,
-        default=32,
+        default=128,
         help="Number of gradient ascent steps to perform per sample."
     )
     parser.add_argument(
         "--evaluation-samples",
         type=int,
-        default=8,
+        default=16,
         help="Number of datums to perform gradient ascent from."
     )
 
@@ -110,9 +110,9 @@ def gradient_ascent(
     batch_size: int = 128,
     val_size: int = 200,
     forward_model_lr: float = 0.0003,
-    solver_steps: int = 32,
+    solver_steps: int = 128,
     solver_lr: float = 0.01,
-    solver_samples: int = 8
+    solver_samples: int = 16
 ) -> None:
     """
     Train a surrogate objective model and perform gradient ascent to solve a
