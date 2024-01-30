@@ -66,7 +66,7 @@ def safeweight(
             set. Default 200.
         model_hidden_size: model hidden dimensions. Default 64.
         model_lr: learning rate for training the model. Default 1e-3.
-        sol_x_samples: number of candidate designs to generate. Default 256.
+        sol_x_samples: number of candidate designs to generate. Default 2048.
         sol_x_lr: step size for candidate design generation. Default 2e-3.
         discrete_smoothing: discrete smoothing of the one-hot encoded inputs
             for discrete tasks.

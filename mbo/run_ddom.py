@@ -89,7 +89,7 @@ def build_args() -> argparse.Namespace:
 def heun_sampler(
     task: design_bench.task.Task,
     sde: Union[DiffusionTest, DiffusionScore],
-    num_samples: int = 256,
+    num_samples: int = 2048,
     num_steps: int = 1000,
     gamma: float = 1.0,
     device: torch.device = torch.device("cpu"),
@@ -99,7 +99,7 @@ def heun_sampler(
     Input:
         task: design-bench MBO task.
         sde: stochastic differential equation (SDE) diffusion model.
-        num_samples: number of samples. Default 256.
+        num_samples: number of samples. Default 2048.
         num_steps: number of integration steps for sampling. Default 1000.
         gamma: drift parameter. Default 1.0.
         device: device. Default CPU.
@@ -479,7 +479,7 @@ def ddom_eval(
         task_name: name of the design-bench MBO task.
         ckpt_dir: directory to saved checkpoints.
         logging_dir: optional directory to save logs and results to.
-        num_samples: number of samples. Default 256.
+        num_samples: number of samples. Default 2048.
         num_steps: number of integration steps for sampling. Default 1000.
         hidden_size: hidden size of the model. Default 2048.
         seed: random seed. Default 42.

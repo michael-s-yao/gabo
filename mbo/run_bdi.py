@@ -208,7 +208,7 @@ def get_conditional_update_functions(
 def bdi(
     task_name: str,
     gamma: float = 0.0,
-    budget: int = 256,
+    budget: int = 2048,
     label: float = 10.0,
     lr: float = 0.1
 ) -> float:
@@ -220,7 +220,7 @@ def bdi(
     Input:
         task_name: name of the offline model-based optimization (MBO) task.
         gamma: gamma parameter for loss weighting. Default 0.0.
-        budget: model evaluation budget. Default 256.
+        budget: model evaluation budget. Default 2048.
         label: label value for the y values. Default 10.0
         lr: learning rate. Default 0.1.
     Returns:
