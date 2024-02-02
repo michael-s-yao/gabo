@@ -1,4 +1,4 @@
-# Offline Generative Adversarial Bayesian Optimization (GABO)
+# Generative Adversarial Bayesian Optimization (GABO) for Surrogate Objectives
 
 [![LICENSE](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.md)
 [![CONTACT](https://img.shields.io/badge/contact-michael.yao%40pennmedicine.upenn.edu-blue)](mailto:michael.yao@pennmedicine.upenn.edu)
