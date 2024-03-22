@@ -1,4 +1,4 @@
-# Offline Generative Adversarial Bayesian Optimization (GABO)
+# Generative Adversarial Bayesian Optimization (GABO) for Surrogate Objectives
 
 [![LICENSE](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.md)
 [![CONTACT](https://img.shields.io/badge/contact-michael.yao%40pennmedicine.upenn.edu-blue)](mailto:michael.yao@pennmedicine.upenn.edu)
@@ -72,7 +72,17 @@ Questions and comments are welcome. Suggestions can be submitted through Github 
 
 ## Citation
 
-When available, relevant citation information will be added in a future commit.
+If you found our work helpful for your research, please consider citing our paper:
+
+    @misc{yaom2024gabo,
+      title={Generative Adversarial {Bayesian} Optimization for Surrogate Objectives},
+      author={Yao, Michael S. and Zeng, Yimeng and Bastani, Hamsa and Gardner, Jacob and Gee, James C. and Bastani, Osbert},
+      journal={arXiv Preprint},
+      year={2024},
+      eprint={2402.06532},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
+    }
 
 ## License
 
