@@ -2,11 +2,12 @@
 
 METHOD="bfgs"
 TASK=$1
+DEVICE=$2
 
 if [ "$TASK" = "$WARFARIN_TASK" ]
 then
   PARTICLE_GRADIENT_STEPS=2048
-  EVALUATION_SAMPLES=1
+  EVALUATION_SAMPLES=200
 else
   PARTICLE_GRADIENT_STEPS=128
   EVALUATION_SAMPLES=16
@@ -19,7 +20,8 @@ main () {
       --task $TASK \
       --logging-dir db-results/$METHOD-$TASK-$SEED \
       --solver-steps $PARTICLE_GRADIENT_STEPS \
-      --solver-samples $EVALUATION_SAMPLES
+      --solver-samples $EVALUATION_SAMPLES \
+      --device $DEVICE
   done
 }
 
