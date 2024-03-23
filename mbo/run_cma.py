@@ -16,17 +16,14 @@ import cma
 import numpy as np
 import os
 import sys
-import tensorflow as tf
+import torch
 from pathlib import Path
 from typing import Optional, Union
 
 sys.path.append(".")
 import mbo
 import design_bench
-from design_baselines.data import StaticGraphTask, build_pipeline
-from design_baselines.cma_es.trainers import Ensemble
-from design_baselines.cma_es.nets import ForwardModel
-from models.logger import DummyLogger
+from mbo.run_gabo import load_vae_and_surrogate_models
 from helpers import seed_everything
 
 
@@ -60,16 +57,22 @@ def build_args() -> argparse.Namespace:
         help="Logging directory. Default `./db-results`"
     )
     parser.add_argument(
-        "--particle-evaluate-gradient-steps",
+        "--solver-steps",
         type=int,
         default=128,
         help="Number of gradient ascent steps to perform per sample."
     )
     parser.add_argument(
-        "--evaluation-samples",
+        "--solver-samples",
         type=int,
         default=16,
         help="Number of datums to perform gradient ascent from."
+    )
+    parser.add_argument(
+        "--device",
+        type=torch.device,
+        default="cpu",
+        help="Device. Default CPU."
     )
 
     return parser.parse_args()
@@ -78,137 +81,130 @@ def build_args() -> argparse.Namespace:
 def cma_es(
     task_name: str,
     logging_dir: Optional[Union[Path, str]] = None,
-    num_epochs: int = 100,
-    batch_size: int = 128,
-    val_size: int = 200,
-    forward_model_lr: float = 0.0003,
     solver_steps: int = 128,
-    solver_lr: float = 0.01,
     solver_samples: int = 16,
     cma_sigma: float = 0.5,
-    seed: int = 42
+    seed: int = 42,
+    device: torch.device = torch.device("cpu")
 ) -> None:
     """
-    Train a surrogate objective model and perform gradient ascent to solve a
-    Model-Based Optimization (MBO) task. This method is adapted directly from
-    the gradient_ascent() baseline method from the design-baselines repo cited
-    at the top of this source code file.
+    Perform CMA-ES optimization algorithm to solve a Model-Based Optimization
+    (MBO) task. This method is adapted directly from the `cma_es()` baseline
+    method from the design-baselines repo cited at the top of this source code
+    file.
     Input:
         task_name: name of the offline model-based optimization (MBO) task.
         logging_dir: directory to log the optimization results to.
-        aggregation_method: optional specification of aggregating the results
-            of an ensemble of surrogate models. One of [None, `mean`, `min`].
-        num_epochs: number of epochs for the surrogate model. Default 100.
-        batch_size: the number of samples to load in every batch when drawing
-            samples from the training and validation sets. Default 128.
-        val_size: the number of samples randomly chosen to be in the validation
-            set. Default 200.
-        forward_model_lr: learning rate for training the surrogate model.
-            Default 3e-4.
         solver_steps: number of steps for gradient ascent against the trained
             surrogate model. Default 128.
-        solver_lr: step size for gradient ascent against the trained surrogate
-            model. Default 0.01.
         solver_samples: total number of final designs to return. Default 16.
-        cma_sigma: TODO. Default 0.5.
+        cma_sigma: initial standard deviation for the CMA-ES algorithm.
+            Default 0.5.
         seed: random seed. Default 42.
+        device: device. Default CPU.
     Returns:
         None.
     """
-    logger = DummyLogger(logging_dir)
-    task = StaticGraphTask(task_name, relabel=False)
+    task = design_bench.make(task_name)
 
     # Task-specific setup.
-    if task.is_discrete:
-        task.map_to_logits()
     if task_name == os.environ["CHEMBL_TASK"]:
         task.map_normalize_y()
 
-    # Make several keras neural networks with different architectures.
-    num_bootstraps = 5
-    forward_models = [
-        ForwardModel(task.input_shape, num_layers=2, hidden_size=2048)
-        for _ in range(num_bootstraps)
-    ]
+    vae, surrogate = load_vae_and_surrogate_models(
+        task, task_name, device=device
+    )
+    _param = next(iter(surrogate.parameters()))
 
-    # Scale the learning rate based on the number of design dimensions.
-    if hasattr(task.wrapped_task.dataset, "grad_mask"):
-        solver_lr *= np.sqrt(np.sum(task.wrapped_task.dataset.grad_mask))
+    if task_name == os.environ["WARFARIN_TASK"]:
+        bounds = torch.vstack([
+            torch.zeros(vae.latent_size).to(_param),
+            torch.ones(vae.latent_size).to(_param)
+        ])
+        bounds = torch.hstack([
+            torch.from_numpy(task.dataset.opt_dim_bounds).to(_param),
+            bounds
+        ])
+        bounds = bounds[:, :vae.latent_size]
+        for cvar in task.dataset.continuous_vars:
+            bounds[0, task.dataset.column_names.tolist().index(cvar)] = -10.0
+            bounds[1, task.dataset.column_names.tolist().index(cvar)] = 10.0
+        bounds = bounds.detach().cpu().numpy().tolist()
+    elif task_name == os.environ["BRANIN_TASK"]:
+        bounds = task.oracle.oracle.oracle.bounds
+        bounds = bounds.detach().cpu().numpy().tolist()
     else:
-        solver_lr *= np.sqrt(np.prod(task.input_shape))
-
-    ensemble = Ensemble(
-        forward_models,
-        forward_model_optim=tf.keras.optimizers.Adam,
-        forward_model_lr=forward_model_lr
-    )
-    train, validate = build_pipeline(
-        x=task.x,
-        y=task.y,
-        batch_size=batch_size,
-        val_size=val_size,
-        bootstraps=num_bootstraps
-    )
-    ensemble.launch(train, validate, logger=logger, epochs=num_epochs)
+        bounds = None
 
     # Select the top k initial designs from the dataset as starting points.
-    if task_name in mbo.CONDITIONAL_TASKS:
-        X = tf.concat([x for x, _ in validate], axis=0)
-        solver_steps = solver_steps * solver_samples
+    if task_name not in mbo.CONDITIONAL_TASKS:
+        start_idxs = np.argsort(task.y.squeeze())[-solver_samples:]
     else:
-        indices = tf.math.top_k(np.squeeze(task.y, axis=-1), k=solver_samples)
-        indices = indices[1]
-        X = tf.gather(task.x, indices, axis=0)
+        start_idxs = np.random.RandomState(seed=seed).choice(
+            task.y.shape[0], size=solver_samples, replace=False
+        )
+    all_z = vae.encode(torch.from_numpy(task.x[start_idxs]).to(_param))[0]
+    z_shape = all_z.shape[1:]
+    if task_name not in mbo.CONDITIONAL_TASKS:
+        all_z = all_z.reshape(solver_samples, -1)
+    all_z = all_z.detach().cpu().numpy()
 
-    # Create a fitness function for optimizing the expected task score.
-    def fitness(_x: tf.Tensor) -> float:
+    def forward(z: np.ndarray) -> np.ndarray:
         """
-        Computs the fitness of an input design.
-        Inputs:
-            _x: an input 1-D design vector.
+        Implements the offline surrogate forward function to *minimize*.
+        Input:
+            z: input to the forward model.
         Returns:
-            The estimated fitness for optimizing the expected task score.
+            The surrogate function evaluated for each input in the batch.
         """
-        _x = tf.reshape(_x, task.x.shape[1:])[tf.newaxis]
-        value = ensemble.get_distribution(_x).mean()
-        return (-value[0].numpy()).tolist()[0]
+        return -1.0 * (
+            surrogate(torch.from_numpy(z).to(_param)).detach().cpu().numpy()
+        )
 
-    all_X = []
+    designs, preds, scores = [], [], []
     for i in range(solver_samples):
-        xi = X[i].numpy().flatten().tolist()
-        es = cma.CMAEvolutionStrategy(xi, cma_sigma, {"seed": seed})
+        zi = all_z[i].flatten().tolist()
+
+        es = cma.CMAEvolutionStrategy(
+            zi, cma_sigma, {"seed": seed, "bounds": bounds}
+        )
         step = 0
         result = []
         while not es.stop() and step < solver_steps:
             solutions = es.ask()
-            es.tell(solutions, [fitness(x) for x in solutions])
-            result.append(es.result.xbest)
+            es.tell(solutions, [forward(z).item() for z in solutions])
+            if task_name in mbo.CONDITIONAL_TASKS:
+                result.append(
+                    (es.result.xbest * task.dataset.grad_mask) + (
+                        zi * np.logical_not(task.dataset.grad_mask)
+                    )
+                )
+            else:
+                result.append(es.result.xbest)
             step += 1
-        result = ([xi] * (solver_steps - len(result))) + result
-        all_X.append(tf.stack(result, axis=0))
-    all_X = tf.stack(all_X, axis=0)
+        result = ([zi] * (solver_steps - len(result))) + result
+        designs.append(np.vstack(result)[np.newaxis])
+        preds.append(forward(designs[-1].squeeze(axis=0))[np.newaxis])
+        _z = torch.from_numpy(
+            designs[-1].squeeze(axis=0).reshape(-1, *z_shape)
+        )
+        x = vae.sample(z=_z.to(_param))
+        scores.append(task.predict(x.detach().cpu().numpy())[np.newaxis])
+    designs = np.concatenate(designs, axis=0)
+    preds = np.concatenate(preds, axis=0)
+    scores = np.concatenate(scores, axis=0)
 
-    if task.is_discrete:
-        preds = np.array([
-            ensemble.get_distribution(_x[tf.newaxis]).mean()
-            for _x in tf.reshape(all_X, (-1, *X.shape[1:]))
-        ])
+    if task_name not in mbo.CONDITIONAL_TASKS:
+        preds = preds.reshape(solver_samples, solver_steps, 1)
+        scores = scores.reshape(solver_samples, solver_steps, 1)
     else:
-        preds = np.array([
-            ensemble.get_distribution(_x).mean() for _x in all_X
-        ])
-    preds = preds.reshape(all_X.shape[0], all_X.shape[1], 1)
-    scores = task.predict(
-        all_X.numpy().reshape(-1, *task.input_shape).astype(np.float32)
-    )
-    scores = scores.numpy().reshape(all_X.shape[0], all_X.shape[1], 1)
-    if task.is_discrete:
-        all_X = task.to_integers(all_X)
+        preds = preds.squeeze(axis=-1).T[..., np.newaxis]
+        scores = scores.squeeze(axis=-1).T[..., np.newaxis]
 
     # Save the optimization results.
     if logging_dir is not None:
         os.makedirs(logging_dir, exist_ok=True)
-        np.save(os.path.join(logging_dir, "solution.npy"), all_X.numpy())
+        np.save(os.path.join(logging_dir, "solution.npy"), designs)
         np.save(os.path.join(logging_dir, "predictions.npy"), preds)
         np.save(os.path.join(logging_dir, "scores.npy"), scores)
 
@@ -217,8 +213,6 @@ def main():
     args = vars(build_args())
     seed_everything(args["seed"])
     args["task_name"] = args.pop("task")
-    args["solver_steps"] = args.pop("particle_evaluate_gradient_steps")
-    args["solver_samples"] = args.pop("evaluation_samples")
     cma_es(**args)
 
 

@@ -112,19 +112,19 @@ def main():
             os.path.join(args.results_dir, subdir, "scores.npy")
         )
         if os.environ["WARFARIN_TASK"] in exp.task_name and any([
-            method in exp.method for method in ["com", "grad"]
+            method in exp.method for method in ["com", "grad", "cma", "bfgs"]
         ]):
             for i in range(preds.shape[1]):
                 idxs = np.argsort(preds[:, i, 0])
-                results[exp.id_] += scores[idxs[-args.top_k:], i, 0].tolist()
+                results[exp.id_] += [scores[idxs[-args.top_k:], i, 0].max()]
             continue
         elif os.environ["WARFARIN_TASK"] in exp.task_name and (
             "gabo" in exp.method
         ):
             for i in range(preds.shape[0]):
                 idxs = np.argsort(preds[i].flatten())
-                y = scores[i].flatten()[idxs[-args.top_k:]]
-                results[exp.id_] += y.tolist()
+                y = scores[i].flatten()[idxs[-args.top_k:]].max()
+                results[exp.id_] += [y]
             continue
         designs = designs.reshape(-1, designs.shape[-1])
         preds = preds.flatten()
@@ -148,7 +148,7 @@ def main():
             scores = (scores - y.min()) / (y.max() - y.min())
 
         idxs = np.argsort(preds)
-        results[exp.id_] += scores[idxs[-args.top_k:]].tolist()
+        results[exp.id_] += [max(scores[idxs[-args.top_k:]].tolist())]
 
     results = {
         key: f"{np.nanmean(val)} +/- {np.nanstd(val)}"
