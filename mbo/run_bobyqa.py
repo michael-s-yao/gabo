@@ -8,18 +8,20 @@ Author(s):
 Licensed under the MIT License. Copyright University of Pennsylvania 2024.
 """
 import argparse
+import nlopt
 import numpy as np
-import pybobyqa
 import os
 import sys
 import torch
+from functools import partial
 from pathlib import Path
 from typing import Optional, Union
 
 sys.path.append(".")
-import mbo  # noqa
+import mbo
 import design_bench
 from mbo.run_gabo import load_vae_and_surrogate_models
+from models.module import NumPyFCNN
 from helpers import seed_everything
 
 
@@ -53,10 +55,16 @@ def build_args() -> argparse.Namespace:
         help="Logging directory. Default `./db-results`"
     )
     parser.add_argument(
-        "--maxiter",
+        "--solver-steps",
         type=int,
-        default=2048,
-        help="Maximum number of total algorithm iterations. Default 2048."
+        default=128,
+        help="Number of algorithm iterations per sample. Default 128."
+    )
+    parser.add_argument(
+        "--solver-samples",
+        type=int,
+        default=16,
+        help="Number of initial starting points to use. Default 16."
     )
     parser.add_argument(
         "--device",
@@ -72,8 +80,10 @@ def run_BOBYQA(
     task_name: str,
     logging_dir: Optional[Union[Path, str]] = None,
     step_size: float = 0.01,
-    maxiter: int = 2048,
-    device: torch.device = torch.device("cpu")
+    solver_steps: int = 128,
+    solver_samples: int = 16,
+    device: torch.device = torch.device("cpu"),
+    seed: int = 42
 ) -> None:
     """
     Train a surrogate objective model and use BOBYQA to solve a
@@ -82,12 +92,15 @@ def run_BOBYQA(
         task_name: name of the offline model-based optimization (MBO) task.
         logging_dir: directory to log the optimization results to.
         step_size: step size for the optimization algorithm. Default 0.01.
-        maxiter: maximum number of iterations. Default 2048.
+        solver_steps: number of iterations per sample. Default 128.
+        solver_samples: number initial starting points to use. Default 16.
         device: device. Default CPU.
+        seed: random seed. Default 42.
     Returns:
         None.
     """
     task = design_bench.make(task_name)
+    nlopt.srand(seed)
 
     # Task-specific setup.
     if task_name == os.environ["CHEMBL_TASK"]:
@@ -97,9 +110,15 @@ def run_BOBYQA(
         task, task_name, device=device
     )
     _param = next(iter(surrogate.parameters()))
+    surrogate = NumPyFCNN(surrogate)
 
-    start_idxs = np.flip(np.argsort(task.y.squeeze()))
-    start_idxs = start_idxs[:min(maxiter, task.y.shape[0])]
+    if task_name in mbo.CONDITIONAL_TASKS:
+        start_idxs = np.random.RandomState(seed=seed).choice(
+            task.y.shape[0], size=solver_samples, replace=False
+        )
+    else:
+        start_idxs = np.flip(np.argsort(task.y.squeeze()))
+        start_idxs = start_idxs[:solver_samples]
     all_x = task.x[start_idxs]
     all_z = []
     for x in all_x:
@@ -110,80 +129,82 @@ def run_BOBYQA(
     z_shape = tuple(all_z.size())[1:]
     all_z = all_z.reshape(all_z.size(dim=0), -1).detach().cpu().numpy()
 
-    def forward(z: np.ndarray) -> np.ndarray:
-        """
-        Implements the offline surrogate forward function to *minimize*.
-        Input:
-            z: input to the forward model.
-        Returns:
-            The surrogate function evaluated for each input in the batch.
-        """
-        return -1.0 * (
-            surrogate(torch.from_numpy(z).to(_param)).detach().cpu().numpy()
-        )
-
     if task_name == os.environ["WARFARIN_TASK"]:
-        bounds = torch.vstack([
-            torch.zeros(vae.latent_size).to(_param),
-            torch.ones(vae.latent_size).to(_param)
-        ])
-        bounds = torch.hstack([
-            torch.from_numpy(task.dataset.opt_dim_bounds).to(_param),
-            bounds
-        ])
-        bounds = bounds[:, :vae.latent_size]
-        for cvar in task.dataset.continuous_vars:
-            bounds[0, task.dataset.column_names.tolist().index(cvar)] = -10.0
-            bounds[1, task.dataset.column_names.tolist().index(cvar)] = 10.0
-        bounds = bounds.detach().cpu().numpy()
+        bounds = task.dataset.opt_dim_bounds
     elif task_name == os.environ["BRANIN_TASK"]:
         bounds = task.oracle.oracle.oracle.bounds
         bounds = bounds.detach().cpu().numpy()
     else:
-        inf = (1.0 / np.finfo(np.float32).eps)
+        inf = 1.0 / np.finfo(np.float16).eps
         bounds = np.vstack([
             -inf * np.ones(vae.latent_size, dtype=np.float32),
             inf * np.ones(vae.latent_size, dtype=np.float32)
         ])
 
-    solz = []
-    for zidx in range(all_z.shape[0]):
-        solution = pybobyqa.solve(
-            forward,
-            all_z[zidx],
-            bounds=(bounds[0], bounds[-1]),
-            seek_global_minimum=True,
-            do_logging=True,
-            user_params={
-                "logging.save_xk": True, "logging.save_diagnostic_info": True
-            }
-        )
-        for xk in solution.diagnostic_info["xk"].iloc[::-1]:
-            solz.append(xk[np.newaxis])
-        if len(solz) >= maxiter:
-            break
-    all_z = np.concatenate(solz, axis=0)[:maxiter]
+    designs, preds = [], []
 
-    preds = -1.0 * forward(all_z)[np.newaxis]
-    all_z = all_z.reshape(all_z.shape[0], *z_shape)
-    all_z = torch.from_numpy(all_z).to(_param)
-    scores = task.predict(
-        vae.sample(z=all_z.reshape(-1, *z_shape)).detach().cpu().numpy()
+    def unit_forward(
+        z: np.ndarray,
+        grad: np.ndarray,
+        conditions: Optional[np.ndarray] = None
+    ) -> float:
+        assert z.ndim == 1
+        if conditions is not None:
+            z = np.hstack([z, conditions])
+        designs.append(z[np.newaxis])
+        y = surrogate(z).item()
+        preds.append(y)
+        return -1.0 * y
+
+    for zidx in range(all_z.shape[0]):
+        if task_name in mbo.CONDITIONAL_TASKS:
+            _z = all_z[zidx][np.where(task.dataset.grad_mask)[0]]
+            conditions = all_z[zidx][
+                np.where(np.logical_not(task.dataset.grad_mask))[0]
+            ]
+        else:
+            _z, conditions = all_z[zidx], None
+        opt = nlopt.opt(nlopt.LN_BOBYQA, len(_z))
+        opt.set_min_objective(partial(unit_forward, conditions=conditions))
+        opt.set_lower_bounds(bounds[0])
+        opt.set_upper_bounds(bounds[-1])
+        opt.set_maxeval(solver_steps)
+        init_size = len(designs)
+        try:
+            opt.optimize(_z)
+        except nlopt.RoundoffLimited:
+            pass
+        preds += [surrogate(all_z[zidx]).item()] * (
+            solver_steps - (len(designs) - init_size)
+        )
+        designs += [all_z[zidx][np.newaxis]] * (
+            solver_steps - (len(designs) - init_size)
+        )
+    designs = np.concatenate(designs).reshape(
+        solver_samples, solver_steps, *z_shape
     )
-    scores = scores[np.newaxis]
-    all_z = all_z.detach().cpu().numpy()[np.newaxis]
+    scores = [
+        task.predict(vae.sample(z=z).detach().cpu().numpy())[np.newaxis]
+        for z in torch.from_numpy(designs).to(_param)
+    ]
+    scores = np.concatenate(scores)
+    preds = np.array(preds).reshape(solver_samples, solver_steps, 1)
+    if task_name in mbo.CONDITIONAL_TASKS:
+        designs = designs.transpose(1, 0, 2)
+        preds = preds.transpose(1, 0, 2)
+        scores = scores.transpose(1, 0, 2)
 
     # Save the optimization results.
     if logging_dir is not None:
         os.makedirs(logging_dir, exist_ok=True)
-        np.save(os.path.join(logging_dir, "solution.npy"), all_z)
+        np.save(os.path.join(logging_dir, "solution.npy"), designs)
         np.save(os.path.join(logging_dir, "predictions.npy"), preds)
         np.save(os.path.join(logging_dir, "scores.npy"), scores)
 
 
 def main():
     args = vars(build_args())
-    seed_everything(seed=args.pop("seed"))
+    seed_everything(args["seed"])
     args["task_name"] = args.pop("task")
     run_BOBYQA(**args)
 
