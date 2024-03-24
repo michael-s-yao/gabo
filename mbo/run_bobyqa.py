@@ -79,7 +79,6 @@ def build_args() -> argparse.Namespace:
 def run_BOBYQA(
     task_name: str,
     logging_dir: Optional[Union[Path, str]] = None,
-    step_size: float = 0.01,
     solver_steps: int = 128,
     solver_samples: int = 16,
     device: torch.device = torch.device("cpu"),
@@ -91,7 +90,6 @@ def run_BOBYQA(
     Input:
         task_name: name of the offline model-based optimization (MBO) task.
         logging_dir: directory to log the optimization results to.
-        step_size: step size for the optimization algorithm. Default 0.01.
         solver_steps: number of iterations per sample. Default 128.
         solver_samples: number initial starting points to use. Default 16.
         device: device. Default CPU.
