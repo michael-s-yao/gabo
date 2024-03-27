@@ -5,16 +5,11 @@ TASK=$1
 
 if [ "$TASK" = "$WARFARIN_TASK" ]
 then
-  PARTICLE_GRADIENT_STEPS=256
+  PARTICLE_GRADIENT_STEPS=2048
   EVALUATION_SAMPLES=1
-elif [ "$TASK" = "$MOLECULE_TASK" ]
-then
+else
   PARTICLE_GRADIENT_STEPS=128
   EVALUATION_SAMPLES=16
-else
-  PARTICLE_GRADIENT_STEPS=32
-  EVALUATION_SAMPLES=8
-fi
 
 if [ "$TASK" = "$CHEMBL_TASK" ]
 then
@@ -24,7 +19,7 @@ else
 fi
 
 main () {
-  for SEED in 42 43 44 45 46; do
+  for SEED in 42 43 44 45 46 47 48 49; do
     python mbo/run_$METHOD.py \
       --seed $SEED \
       --task $TASK \

@@ -48,5 +48,15 @@ def build_args() -> argparse.Namespace:
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed. Default 42."
     )
+    parser.add_argument(
+        "--smart-start",
+        action="store_true",
+        help="Whether to initilize the GP with the best points in the dataset."
+    )
+    parser.add_argument(
+        "--ablate-source-critic-training",
+        action="store_true",
+        help="Whether to keep the source critic fixed during optimization."
+    )
 
     return parser.parse_args()

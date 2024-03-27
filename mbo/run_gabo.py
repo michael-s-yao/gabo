@@ -110,13 +110,22 @@ def main():
         conditions = None
 
     # Choose the initial set of observations.
-    sobol = torch.quasirandom.SobolEngine(
-        dimension=vae.latent_size, scramble=True, seed=args.seed
-    )
-    z = unnormalize(
-        sobol.draw(n=(batch_size * val_size)).to(device),
-        bounds=bounds
-    )
+    if not args.smart_start:
+        sobol = torch.quasirandom.SobolEngine(
+            dimension=vae.latent_size, scramble=True, seed=args.seed
+        )
+        z = unnormalize(
+            sobol.draw(n=(batch_size * val_size)).to(device),
+            bounds=bounds
+        )
+    else:
+        _n = min(batch_size * val_size, len(task.y.squeeze()))
+        _x_init = torch.from_numpy(
+            task.x[np.argsort(task.y.squeeze())[-_n:]]
+        )
+        z, _, _ = vae.encode(_x_init.to(device))
+        z = z.to(torch.float64)
+        z = torch.from_numpy(z.detach().cpu().numpy()).to(device)
     z = torch.squeeze(z.resize_(val_size, batch_size, vae.latent_size), dim=0)
     z_ref, _, _ = vae.encode(
         policy.reference_sample(8 * batch_size).flatten(start_dim=1)
@@ -191,7 +200,9 @@ def main():
         policy.save_current_state_dict()
 
         # Train the source critic.
-        if step % num_generator_per_critic == 0:
+        if step % num_generator_per_critic == 0 and (
+            not args.ablate_source_critic_training
+        ):
             policy.fit_critic(new_z.detach(), z_ref.detach())
 
     # Save optimization results.

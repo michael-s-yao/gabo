@@ -11,7 +11,7 @@ run () {
   else
     ALPHA="--alpha $1"
   fi
-  for SEED in 42 43 44 45 46; do
+  for SEED in 42 43 44 45 46 47 48 49; do
     python mbo/run_$METHOD.py \
       --task $TASK \
       --logging-dir db-results/$METHOD-$TASK-$1-$SEED \

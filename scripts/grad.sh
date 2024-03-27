@@ -14,7 +14,7 @@ fi
 
 main () {
   for AGGREGATION_METHOD in "None" "mean" "min"; do
-    for SEED in 42 43 44 45 46; do
+    for SEED in 42 43 44 45 46 47 48 49; do
       python mbo/run_$METHOD.py \
         --seed $SEED \
         --task $TASK \

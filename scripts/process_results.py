@@ -111,8 +111,11 @@ def main():
         scores = np.load(
             os.path.join(args.results_dir, subdir, "scores.npy")
         )
+
         if os.environ["WARFARIN_TASK"] in exp.task_name and any([
-            method in exp.method for method in ["com", "grad", "cma", "bfgs"]
+            method in exp.method for method in [
+                "com", "grad", "cma", "bfgs", "bobyqa", "simanneal"
+            ]
         ]):
             for i in range(preds.shape[1]):
                 idxs = np.argsort(preds[:, i, 0])

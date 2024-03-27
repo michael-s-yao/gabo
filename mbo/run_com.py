@@ -103,6 +103,12 @@ def get_task_name() -> Optional[str]:
     type=bool,
     help="Whether to run the experiment quickly and log only once."
 )
+@click.option(
+    "--task-relabel/--no-task-relabel",
+    default=False,
+    type=bool,
+    help="Whether to relabel the y values in the task. Default False."
+)
 def coms_partial(
     task: str,
     logging_dir: Union[Path, str],

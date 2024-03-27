@@ -83,6 +83,7 @@ class MBOOptimizationProblem(Annealer):
         init_state: np.ndarray,
         conditions: Optional[np.ndarray] = None,
         bounds: Optional[np.ndarray] = None,
+        options: Optional[np.ndarray] = None,
         seed: int = 42,
         device: torch.device = torch.device("cpu")
     ):
@@ -96,6 +97,8 @@ class MBOOptimizationProblem(Annealer):
             bounds: an optional array of bounds for continuous MBO problems.
                 Must be specified for continuous MBO problems. Expect a 2xD
                 array if specified, where D is the number of state dimensions.
+            options: an optional NxD array of values to choose from for
+                continuous optimization tasks.
             seed: random seed. Default 42.
             device: device. Default CPU.
         """
@@ -106,6 +109,7 @@ class MBOOptimizationProblem(Annealer):
         self.task = task
         self.conditions = conditions
         self.bounds = bounds
+        self.options = options
         self.seed = seed
         self.copy_strategy = "method"
         self._rng = np.random.RandomState(seed=seed)
@@ -129,9 +133,15 @@ class MBOOptimizationProblem(Annealer):
             self.state[a], self.state[b] = self.state[b], self.state[a]
         else:
             for dim in range(len(self.state)):
-                self.state[dim] = self._rng.uniform(
-                    low=self.bounds[0, dim], high=self.bounds[1, dim]
-                )
+                if self.options is not None:
+                    other = self._rng.choice(self.options[:, dim])
+                    while other == self.state[dim]:
+                        other = self._rng.choice(self.options[:, dim])
+                    self.state[dim] = other
+                else:
+                    self.state[dim] = self._rng.uniform(
+                        low=self.bounds[0, dim], high=self.bounds[1, dim]
+                    )
 
     def energy(self) -> float:
         """
@@ -197,8 +207,10 @@ def run_simanneal(
         start_idxs = start_idxs[:solver_samples]
     all_x = task.x[start_idxs]
 
+    options = None
     if task_name == os.environ["WARFARIN_TASK"]:
         bounds = task.dataset.opt_dim_bounds
+        options = task.x[:, 0][..., np.newaxis]
     elif task_name == os.environ["BRANIN_TASK"]:
         bounds = task.oracle.oracle.oracle.bounds
         bounds = bounds.detach().cpu().numpy()
@@ -217,14 +229,38 @@ def run_simanneal(
             init_state=_x,
             conditions=conditions,
             bounds=bounds,
+            options=options,
             seed=seed,
             device=device
         )
         problem.set_schedule(problem.auto(minutes=0.2, steps=solver_steps))
         state, _ = problem.anneal()
         ALL_DESIGNS.append(state)
-        ALL_DESIGNS += (((xidx + 1) * solver_steps) - len(ALL_DESIGNS)) * [_x]
-    designs = np.vstack(ALL_DESIGNS)
+        targ_length = (xidx + 1) * solver_steps
+        if len(ALL_DESIGNS) < targ_length:
+            if task_name in mbo.CONDITIONAL_TASKS:
+                ALL_DESIGNS += (targ_length - len(ALL_DESIGNS)) * [[_x]]
+            else:
+                ALL_DESIGNS += (targ_length - len(ALL_DESIGNS)) * [_x]
+        elif len(ALL_DESIGNS) > targ_length:
+            for i in list(range(len(ALL_DESIGNS) - targ_length))[::-1]:
+                del ALL_DESIGNS[-solver_steps + i]
+
+    if conditions is not None:
+        designs = []
+        for xidx in range(all_x.shape[0]):
+            d = []
+            for i in range(xidx * solver_steps, (xidx + 1) * solver_steps):
+                d.append(ALL_DESIGNS[i] + conditions.tolist())
+            designs.append(np.vstack(d)[np.newaxis])
+    designs = np.concatenate(designs, axis=0)
+    if conditions is not None:
+        designs = designs.reshape(-1, designs.shape[-1])
+        for x in designs:
+            for i in range(len(x)):
+                if isinstance(x[i], np.ndarray):
+                    x[i] = x[i].item()
+        designs = designs.astype(np.float32)
     preds = np.array([problem.forward(x.tolist()) for x in designs])
     scores = task.predict(designs)
     designs = designs.reshape(solver_steps, solver_samples, -1)
